@@ -1,0 +1,112 @@
+substitutions:
+  name: "strawberry"
+  friendly_name: "strawberry"
+
+  # Project
+  platform: "esp32dev"
+  manufacturer: "espressif"
+  project_name: "electicity-meter"
+  version: "1.0.0"
+
+  # Config
+  port: "23"
+  buffer_size: "2048"
+
+  # Serial
+  baudrate: "9600"
+  data_bits: "8"
+  parity: NONE
+  stop_bits: "1"
+
+  # GPIOs
+  tx_pin: TX
+  rx_pin: RX
+  led_pin: GPIO25
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2024.6.0
+  name_add_mac_suffix: false
+  project:
+    name: ${manufacturer}.${project_name}
+    version: ${version}
+
+esp32:
+  board: ${platform}
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+  baud_rate: 0
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret strawberry_api_key
+
+ota:
+  - platform: esphome
+    password: !secret strawberry_ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Strawberry Fallback Hotspot"
+    password: !secret strawberry_fallback_password
+
+captive_portal:
+
+external_components:
+  - source: github://oxan/esphome-stream-server
+
+uart:
+  baud_rate: ${baudrate}
+  data_bits: ${data_bits}
+  parity: ${parity}
+  stop_bits: ${stop_bits}
+  tx_pin: ${tx_pin}
+  rx_pin: ${rx_pin}
+  rx_buffer_size: ${buffer_size}
+
+stream_server:
+  port: ${port}
+  buffer_size: ${buffer_size}
+
+button:
+  - platform: restart
+    name: "Restart node"
+
+binary_sensor:
+  - platform: status
+    name: "Node status"
+
+  - platform: stream_server
+    connected:
+      name: "UART server connected"
+      on_press:
+        then:
+          - light.turn_on: server_status
+      on_release:
+        then:
+          - light.turn_off: server_status
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    mac_address:
+      name: "MAC Address"
+
+sensor:
+  - platform: wifi_signal
+    name: "WLAN RSSI"
+
+light:
+  - platform: status_led
+    id: server_status
+    pin: ${led_pin}

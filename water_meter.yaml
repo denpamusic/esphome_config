@@ -1,0 +1,1122 @@
+substitutions:
+  name: "mango"
+  friendly_name: "mango"
+
+  # Project
+  platform: "esp32-s3-devkitc-1"
+  manufacturer: "lolin"
+  project_name: "water-meter"
+  version: "1.8.6"
+
+  # Config
+  pulse_min_length: 75ms
+  pulse_timeout: 30sec
+  pulse_debounce: 1s
+
+  # OLED
+  display_page: 5sec
+  display_contrast: 80%
+  display_timeout: 70sec
+
+  # Buzzer
+  buzzer_freq: "2700Hz"
+
+  # Temperature
+  water_temperature_update_interval: 30sec
+  water_temperature_freezing_point: "2.0"
+
+  # Pressure
+  static_pressure_measure_interval: 10sec
+  static_pressure_measures: "3"
+  dynamic_pressure_measures: "5"
+  low_water_pressure_threshold: "0.5"
+  min_water_pressure: "0.0"
+  max_water_pressure: "5.0"
+  min_sensor_voltage: "0.3"
+
+  # I2C
+  i2c_freq: 100kHz
+
+  # GPIOs
+  pressure_sensor_1_pin: GPIO2
+  pressure_sensor_2_pin: GPIO12
+  one_wire_pin: GPIO13
+  water_meter_pin: GPIO11
+  buzzer_pin: GPIO10
+  led_pin: GPIO47
+  i2c_sda_pin: GPIO35
+  i2c_scl_pin: GPIO36
+  oled_reset_pin: GPIO43
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2025.5.0
+  name_add_mac_suffix: false
+  project:
+    name: "${manufacturer}.${project_name}"
+    version: ${version}
+  on_boot:
+    then:
+      - script.execute:
+          id: set_meter_value
+          new_total: !lambda "return id(water_meter_pulses);"
+      - script.execute:
+          id: water_dose_counter
+          reset: "true"
+      - script.execute: short_beep
+
+esp32:
+  board: ${platform}
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret mango_api_key
+  actions:
+    - action: calibrate_water_meter
+      variables:
+        new_total: int
+      then:
+        - script.execute:
+            id: set_meter_value
+            new_total: !lambda "return new_total;"
+    - action: calibrate_filter_capacity
+      variables:
+        new_capacity: int
+      then:
+        - script.execute:
+            id: set_water_filter_capacity
+            new_capacity: !lambda "return new_capacity;"
+
+# Allow Over-The-Air updates
+ota:
+  - platform: esphome
+    password: !secret mango_ota_password
+
+wifi:
+  ssid: !secret wifi_iot_ssid
+  password: !secret wifi_iot_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Mango Fallback Hotspot"
+    password: !secret mango_fallback_password
+
+# In combination with the `ap` this allows the user
+# to provision wifi credentials to the device via WiFi AP.
+captive_portal:
+
+globals:
+  - id: water_meter_pulses
+    type: unsigned int
+    restore_value: True
+    initial_value: "0"
+
+  - id: water_meter_running
+    type: bool
+    restore_value: False
+    initial_value: "false"
+
+  - id: calibrating
+    type: bool
+    restore_value: False
+    initial_value: "false"
+
+  - id: display_done
+    type: bool
+    restore_value: False
+    initial_value: "false"
+
+  - id: water_filter_capacity
+    type: unsigned int
+    restore_value: True
+    initial_value: "35000"
+
+  - id: prev_water_filter_max_capacity
+    type: int
+    restore_value: True
+    initial_value: "0"
+
+  # 0. pressure sensor 1
+  # 1. pressure sensor 2
+  # 2. temperature sensor
+  # 3. inlet pressure
+  # 4. water filter
+  - id: component_status
+    type: std::vector<bool>
+    restore_value: False
+    initial_value: '{
+      true,
+      true,
+      true,
+      true,
+      true,
+    }'
+
+output:
+  - platform: ledc
+    pin: ${buzzer_pin}
+    id: buzzer
+
+light:
+  - platform: esp32_rmt_led_strip
+    rgb_order: RGB
+    pin: ${led_pin}
+    num_leds: 1
+    chipset: ws2812
+    id: led
+
+one_wire:
+  - platform: gpio
+    pin: ${one_wire_pin}
+
+i2c:
+  sda: ${i2c_sda_pin}
+  scl: ${i2c_scl_pin}
+  frequency: ${i2c_freq}
+
+font:
+  - file: "gfonts://Material+Symbols+Outlined"
+    id: icons_16
+    size: 16
+    glyphs: [
+      "\U0000e002", # warning
+      "\U0000eb3b", # ac_unit
+      "\U0000e646", # plug-off
+      "\U0000e627", # sync
+    ]
+
+  - file: "gfonts://Material+Symbols+Outlined"
+    id: icons_12
+    size: 12
+    glyphs: [
+      "\U0000f163", # humidity_high
+      "\U0000e846", # thermometer
+      "\U0000e9e4", # speed
+      "\U0000ef4f", # filter
+      "\U0000e87d", # favorite
+    ]
+
+  - file: "gfonts://Roboto"
+    id: roboto_16
+    size: 16
+
+  - file: "gfonts://Roboto"
+    id: roboto_12
+    size: 12
+
+  - file: "gfonts://Roboto"
+    id: roboto_10
+    size: 10
+
+  - file: "gfonts://Roboto"
+    id: roboto_8
+    size: 8
+
+interval:
+  - interval: ${display_page}
+    then:
+      - script.execute: flip_page
+
+  - interval: ${static_pressure_measure_interval}
+    then:
+      - if:
+          condition:
+            lambda: "return !id(water_meter_running);"
+          then:
+            - component.update: water_pressure_sensor_2_voltage
+            - component.update: water_pressure_sensor_1_voltage
+            - sensor.template.publish:
+                id: static_water_pressure_2
+                state: !lambda "return id(current_water_pressure_2).state;"
+            - sensor.template.publish:
+                id: static_water_pressure_1
+                state: !lambda "return id(current_water_pressure_1).state;"
+
+display:
+  - platform: ssd1306_i2c
+    id: my_display
+    model: "SSD1306 64x48"
+    address: 0x3C
+    contrast: ${display_contrast}
+    update_interval: 500ms
+    reset_pin: ${oled_reset_pin}
+    pages:
+      - id: pressure
+        lambda: |-
+          it.print(0, 0, id(roboto_8), TextAlign::TOP_LEFT, "Pressure");
+          it.printf(64, 0, id(roboto_8), TextAlign::TOP_RIGHT, "1/%u", id(water_filter_support).state ? 3 : 2 );
+          it.line(0, 9, 64, 9);
+          it.print(0, 9, id(icons_12), TextAlign::TOP_LEFT, "\U0000e9e4");
+          it.print(12, 9, id(roboto_8), TextAlign::TOP_LEFT, "1");
+          it.printf(64, 9, id(roboto_12), TextAlign::TOP_RIGHT, "%.1f bar", id(current_water_pressure_1).state);
+          it.print(0, 21, id(icons_12), TextAlign::TOP_LEFT, "\U0000e9e4");
+          it.print(12, 21, id(roboto_8), TextAlign::TOP_LEFT, "2");
+          it.printf(64, 21, id(roboto_12), TextAlign::TOP_RIGHT, "%.1f bar", id(current_water_pressure_2).state);
+          it.line(0, 35, 64, 35);
+          it.printf(64, 48, id(roboto_10), TextAlign::BOTTOM_RIGHT, "%.3f m3", id(water_consumption).state / 1000);
+      - id: warning_low_inlet_pressure
+        lambda: |-
+          it.rectangle(2, 2, 60, 44);
+          it.print(32, 4, id(icons_16), TextAlign::TOP_CENTER, "\U0000e002");
+          it.print(32, 21, id(roboto_10), TextAlign::TOP_CENTER, "Low inlet");
+          it.print(32, 30, id(roboto_10), TextAlign::TOP_CENTER, "pressure!");
+      - id: error_pressure_sensor_1
+        lambda: |-
+          it.rectangle(2, 2, 60, 44);
+          it.print(32, 4, id(icons_16), TextAlign::TOP_CENTER, "\U0000e646");
+          it.print(32, 21, id(roboto_10), TextAlign::TOP_CENTER, "Sensor 1");
+          it.print(32, 30, id(roboto_10), TextAlign::TOP_CENTER, "error!");
+      - id: error_pressure_sensor_2
+        lambda: |-
+          it.rectangle(2, 2, 60, 44);
+          it.print(32, 4, id(icons_16), TextAlign::TOP_CENTER, "\U0000e646");
+          it.print(32, 21, id(roboto_10), TextAlign::TOP_CENTER, "Sensor 2");
+          it.print(32, 30, id(roboto_10), TextAlign::TOP_CENTER, "error!");
+      - id: water_flow
+        lambda: |-
+          it.print(0, 0, id(roboto_8), TextAlign::TOP_LEFT, "Water flow");
+          it.printf(64, 0, id(roboto_8), TextAlign::TOP_RIGHT, "2/%u", id(water_filter_support).state ? 3 : 2);
+          it.line(0, 9, 64, 9);
+          it.print(0, 9, id(icons_12), TextAlign::TOP_LEFT, "\U0000f163");
+          it.printf(64, 9, id(roboto_12), TextAlign::TOP_RIGHT, "%.1f L/m", id(water_meter).state);
+          it.print(0, 21, id(icons_12), TextAlign::TOP_LEFT, "\U0000e846");
+
+          if (isnan(id(current_water_temperature).state)) {
+            static int i = 0;
+            i++;
+            if ((i % 2) == 0) {
+              it.printf(64, 21, id(roboto_12), TextAlign::TOP_RIGHT, "waiting", id(current_water_temperature).state);
+            } else {
+              it.print(64, 21, id(roboto_12), TextAlign::TOP_RIGHT, "");
+            }
+          } else {
+            it.printf(64, 21, id(roboto_12), TextAlign::TOP_RIGHT, "%.1f °C", id(current_water_temperature).state);
+          }
+
+          it.line(0, 35, 64, 35);
+          it.printf(64, 48, id(roboto_10), TextAlign::BOTTOM_RIGHT, "%.3f m3", id(water_consumption).state / 1000);
+      - id: warning_freezing_point
+        lambda: |-
+          it.rectangle(2, 2, 60, 44);
+          it.print(32, 4, id(icons_16), TextAlign::TOP_CENTER, "\U0000eb3b");
+          it.print(32, 21, id(roboto_10), TextAlign::TOP_CENTER, "Freezing");
+          it.print(32, 30, id(roboto_10), TextAlign::TOP_CENTER, "point!");
+      - id: water_filter
+        lambda: |-
+          it.print(0, 0, id(roboto_8), TextAlign::TOP_LEFT, "Water filter");
+          it.print(64, 0, id(roboto_8), TextAlign::TOP_RIGHT, "3/3");
+          it.line(0, 9, 64, 9);
+          it.print(0, 9, id(icons_12), TextAlign::TOP_LEFT, "\U0000ef4f");
+          it.printf(64, 9, id(roboto_12), TextAlign::TOP_RIGHT, "%.0f L", id(water_filter_remaining_capacity).state);
+          it.print(0, 21, id(icons_12), TextAlign::TOP_LEFT, "\U0000e87d");
+          it.printf(64, 21, id(roboto_12), TextAlign::TOP_RIGHT, "%.1f %%", id(water_filter_remaining_lifetime).state);
+          it.line(0, 35, 64, 35);
+          it.printf(64, 48, id(roboto_10), TextAlign::BOTTOM_RIGHT, "%.3f m3", id(water_consumption).state / 1000);
+      - id: warning_replace_filter
+        lambda: |-
+          it.rectangle(2, 2, 60, 44);
+          it.print(32, 4, id(icons_16), TextAlign::TOP_CENTER, "\U0000e627");
+          it.print(32, 21, id(roboto_10), TextAlign::TOP_CENTER, "Replace");
+          it.print(32, 30, id(roboto_10), TextAlign::TOP_CENTER, "filter!");
+
+script:
+  - id: single_beep
+    mode: single
+    parameters:
+      beep_length: int
+    then:
+      - output.turn_on: buzzer
+      - output.ledc.set_frequency:
+          id: buzzer
+          frequency: ${buzzer_freq}
+      - output.set_level:
+          id: buzzer
+          level: 0.5
+      - delay: !lambda "return beep_length;"
+      - output.turn_off: buzzer
+
+  - id: short_beep
+    mode: single
+    then:
+      - script.execute:
+          id: single_beep
+          beep_length: 100
+
+  - id: long_beep
+    mode: single
+    then:
+      - script.execute:
+          id: single_beep
+          beep_length: 500
+
+  - id: double_beep
+    mode: single
+    then:
+      - script.execute: short_beep
+      - delay: 100ms
+      - script.execute: short_beep
+
+  - id: component_status_report
+    mode: single
+    then:
+      - while:
+          condition:
+            - binary_sensor.is_on: pending_error
+          then:
+            - repeat:
+                count: 5
+                then:
+                  - if:
+                      condition:
+                        lambda: "return id(component_status)[iteration];"
+                      then:
+                        - light.turn_on:
+                            id: led
+                            red: 0%
+                            green: 100%
+                            blue: 0%
+                            brightness: 25%
+                            transition_length: 0s
+                        - delay: 200ms
+                      else:
+                        - light.turn_on:
+                            id: led
+                            red: 100%
+                            green: 0%
+                            blue: 0%
+                            brightness: 50%
+                            transition_length: 0s
+                        - delay: 1000ms
+                  - light.turn_off:
+                      id: led
+                      transition_length: 0s
+                  - delay: !lambda "if(iteration < 4) return 1000; else return 5000;"
+      - script.execute: double_beep
+      - light.turn_off: led
+
+  - id: set_meter_value
+    mode: single
+    parameters:
+      new_total: int
+    then:
+      - globals.set:
+          id: calibrating
+          value: "true"
+      - pulse_meter.set_total_pulses:
+          id: water_meter
+          value: !lambda "return new_total;"
+
+  - id: display_timer
+    mode: restart
+    then:
+      - if:
+          condition:
+            - lambda: "return !id(my_display).is_on();"
+          then:
+            - lambda: "id(my_display).turn_on();"
+      - delay: ${display_timeout}
+      - lambda: "id(my_display).turn_off();"
+
+  - id: flip_page
+    then:
+      - if:
+          condition:
+            lambda: "return id(my_display).is_on();"
+          then:
+            - globals.set:
+                id: display_done
+                value: "false"
+            - if:
+                condition:
+                  and:
+                    - display.is_displaying_page: pressure
+                    - or:
+                        - binary_sensor.is_off: water_pressure_low
+                        - binary_sensor.is_on: water_pressure_sensor_1_error
+                then:
+                  - display.page.show_next: my_display # skip low pressure warning page
+            - if:
+                condition:
+                  and:
+                    - display.is_displaying_page: warning_low_inlet_pressure
+                    - binary_sensor.is_off: water_pressure_sensor_1_error
+                then:
+                  - display.page.show_next: my_display # skip sensor 1 error page
+            - if:
+                condition:
+                  and:
+                    - display.is_displaying_page: error_pressure_sensor_1
+                    - binary_sensor.is_off: water_pressure_sensor_2_error
+                then:
+                  - display.page.show_next: my_display # skip sensor 2 error page
+                  - globals.set:
+                      id: display_done
+                      value: "true"
+            - if:
+                condition:
+                  and:
+                    - display.is_displaying_page: water_flow
+                    - binary_sensor.is_off: water_freezing_point
+                    - lambda: "return !id(display_done);"
+                then:
+                  - display.page.show_next: my_display # skip freezing point warning page
+            - if:
+                condition:
+                  and:
+                    - display.is_displaying_page: warning_freezing_point
+                    - switch.is_off: water_filter_support
+                    - lambda: "return !id(display_done);"
+                then:
+                  - display.page.show_next: my_display # skip water filter page if water filter support is disabled
+            - if:
+                condition:
+                  and:
+                    - display.is_displaying_page: water_filter
+                    - binary_sensor.is_off: water_filter_health_low
+                    - lambda: "return !id(display_done);"
+                then:
+                  - display.page.show_next: my_display # skip water filter warning page
+
+            - display.page.show_next: my_display
+            - component.update: my_display
+
+  - id: update_water_temperature
+    mode: restart
+    then:
+      - component.resume:
+          id: current_water_temperature
+          update_interval: ${water_temperature_update_interval}
+      - delay: 3hours
+      - component.suspend: current_water_temperature
+
+  - id: update_dynamic_pressure
+    then:
+      - globals.set:
+          id: water_meter_running
+          value: "true"
+      - component.update: water_pressure_sensor_1_voltage
+      - component.update: water_pressure_sensor_2_voltage
+      - sensor.template.publish:
+          id: dynamic_water_pressure_1
+          state: !lambda "return id(current_water_pressure_1).state;"
+      - sensor.template.publish:
+          id: dynamic_water_pressure_2
+          state: !lambda "return id(current_water_pressure_2).state;"
+
+  - id: set_water_filter_capacity
+    parameters:
+      new_capacity: int
+    then:
+      - globals.set:
+          id: water_filter_capacity
+          value: !lambda "return new_capacity;"
+      - component.update: water_filter_remaining_capacity
+      - component.update: water_filter_remaining_lifetime
+
+  - id: update_water_filter_capacity
+    parameters:
+      difference: int
+    then:
+      - globals.set:
+          id: water_filter_capacity
+          value: !lambda "return id(water_filter_capacity) + difference;"
+      - component.update: water_filter_remaining_capacity
+      - component.update: water_filter_remaining_lifetime
+
+  - id: reset_water_filter_values
+    then:
+      - globals.set:
+          id: water_filter_capacity
+          value: !lambda "return id(water_filter_max_capacity).state;"
+      - sensor.template.publish:
+          id: water_filter_pressure_loss
+          state: "0"
+      - component.update: water_filter_remaining_capacity
+      - component.update: water_filter_remaining_lifetime
+
+  - id: water_dose_counter
+    parameters:
+      reset: bool
+    then:
+      if:
+        condition:
+          lambda: "return reset;"
+        then:
+          - sensor.template.publish:
+              id: single_water_dose
+              state: "0.0"
+        else:
+          - sensor.template.publish:
+              id: single_water_dose
+              state: !lambda "return id(single_water_dose).state + 1.0;"
+
+button:
+  - platform: restart
+    name: "Restart node"
+
+  - platform: template
+    id: reset_water_filter
+    name: "Reset water filter"
+    icon: "mdi:restart"
+    on_press:
+      then:
+        - script.execute: reset_water_filter_values
+
+  - platform: template
+    id: plus_one_liter
+    name: "+1 liter"
+    icon: "mdi:water-plus"
+    entity_category: "config"
+    on_press:
+      then:
+        - script.execute:
+            id: set_meter_value
+            new_total: !lambda "return id(water_consumption).state + 1;"
+
+  - platform: template
+    id: minus_one_liter
+    name: "-1 liter"
+    icon: "mdi:water-minus"
+    entity_category: "config"
+    on_press:
+      then:
+        - script.execute:
+            id: set_meter_value
+            new_total: !lambda "return id(water_consumption).state - 1;"
+
+  - platform: template
+    id: beep
+    name: "Beep"
+    on_press:
+      - script.execute:
+          id: single_beep
+          beep_length: 100
+
+  - platform: template
+    id: display_info
+    name: "Display info"
+    on_press:
+      then:
+        - script.execute: display_timer
+
+binary_sensor:
+  - platform: status
+    name: "Node status"
+
+  - platform: template
+    id: pending_error
+    lambda: |-
+      if (
+        id(water_pressure_sensor_1_error).state ||
+        id(water_pressure_sensor_2_error).state ||
+        id(water_pressure_low).state ||
+        id(water_filter_health_low).state
+      ) return true;
+      return false;
+    on_press:
+      then:
+        - script.execute: long_beep
+        - script.execute: component_status_report
+
+
+  - platform: template
+    id: water_pressure_sensor_1_error
+    lambda: "return id(water_pressure_sensor_1_voltage).state <= ${min_sensor_voltage};"
+    on_press:
+      then:
+        - lambda: "id(component_status)[0] = false;"
+        - script.execute: display_timer
+    on_release:
+      then:
+        - lambda: "id(component_status)[0] = true;"
+        - if:
+            condition:
+              - display.is_displaying_page: error_pressure_sensor_1
+            then:
+              - script.execute: flip_page
+
+  - platform: template
+    id: water_pressure_sensor_2_error
+    lambda: "return id(water_pressure_sensor_2_voltage).state <= ${min_sensor_voltage};"
+    on_press:
+      then:
+        - lambda: "id(component_status)[1] = false;"
+        - script.execute: display_timer
+    on_release:
+      then:
+        - lambda: "id(component_status)[1] = true;"
+        - if:
+            condition:
+              - display.is_displaying_page: error_pressure_sensor_2
+            then:
+              - script.execute: flip_page
+
+  - platform: template
+    id: water_pressure_low
+    name: "Water pressure low"
+    lambda: "return id(current_water_pressure_1).state <= ${low_water_pressure_threshold};"
+    device_class: problem
+    icon: "mdi:gauge-empty"
+    on_press:
+      then:
+        - lambda: "id(component_status)[3] = false;"
+        - script.execute: display_timer
+    on_release:
+      then:
+        - lambda: "id(component_status)[3] = true;"
+        - if:
+            condition:
+              - display.is_displaying_page: warning_low_inlet_pressure
+            then:
+              - script.execute: flip_page
+
+  - platform: template
+    id: water_filter_health_low
+    name: "Water filter health low"
+    lambda: "return id(water_filter_remaining_lifetime).state <= id(low_filter_remaining_lifetime).state;"
+    device_class: problem
+    icon: "mdi:sync-alert"
+    on_press:
+      then:
+        - lambda: "id(component_status)[4] = false;"
+        - script.execute: display_timer
+    on_release:
+      then:
+        - lambda: "id(component_status)[4] = true;"
+        - if:
+            condition:
+              - display.is_displaying_page: warning_replace_filter
+            then:
+              - script.execute: flip_page
+
+  - platform: template
+    id: water_freezing_point
+    lambda: "return id(current_water_temperature).state <= ${water_temperature_freezing_point};"
+
+  - platform: template
+    id: water_pressure_sensor_connection
+    name: "Water pressure sensor connection"
+    icon: "mdi:cable-data"
+    lambda: "return not (id(water_pressure_sensor_1_error).state || id(water_pressure_sensor_2_error).state);"
+    device_class: "connectivity"
+    entity_category: "diagnostic"
+
+  - platform: template
+    id: water_consumption_alert
+    name: "Water consumption alert"
+    icon: "mdi:water-alert"
+    lambda: "return id(single_water_dose).state >= id(max_single_water_dose).state;"
+    device_class: "problem"
+
+  - platform: template
+    id: water_running
+    name: "Water running"
+    icon: "mdi:water-pump"
+    lambda: "return id(water_meter_running);"
+    on_release:
+      then:
+        - script.execute:
+            id: water_dose_counter
+            reset: "true"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP address"
+    mac_address:
+      name: "MAC address"
+
+sensor:
+  - platform: wifi_signal
+    name: "WLAN RSSI"
+    update_interval: 60sec
+    id: wlan_rssi
+
+  - platform: internal_temperature
+    name: "Internal temperature"
+
+  - platform: adc
+    id: water_pressure_sensor_1_voltage
+    name: "Water pressure sensor 1 votage"
+    pin: ${pressure_sensor_1_pin}
+    update_interval: never
+    device_class: "voltage"
+    state_class: "measurement"
+    attenuation: auto
+    accuracy_decimals: 3
+    unit_of_measurement: "V"
+    entity_category: "diagnostic"
+    on_value:
+      then:
+        - sensor.template.publish:
+            id: current_water_pressure_1
+            state: !lambda "return x;"
+
+  - platform: template
+    id: current_water_pressure_1
+    update_interval: never
+    device_class: "pressure"
+    state_class: "measurement"
+    accuracy_decimals: 2
+    unit_of_measurement: "bar"
+    lambda: "return id(water_pressure_sensor_1_voltage).state;"
+    filters:
+      - calibrate_linear:
+          method: least_squares
+          datapoints:
+            - 0.4 -> 0.0
+            - 0.9 -> 1.0
+            - 1.45 -> 2.0
+            - 2.0 -> 3.0
+      - clamp:
+          min_value: ${min_water_pressure}
+          max_value: ${max_water_pressure}
+
+  - platform: template
+    id: static_water_pressure_1
+    name: "Static water pressure 1"
+    accuracy_decimals: 1
+    update_interval: never
+    device_class: "pressure"
+    state_class: "measurement"
+    unit_of_measurement: "bar"
+    filters:
+      - sliding_window_moving_average:
+          window_size: ${static_pressure_measures}
+          send_every: ${static_pressure_measures}
+
+  - platform: template
+    id: dynamic_water_pressure_1
+    name: "Dynamic water pressure 1"
+    update_interval: never
+    device_class: "pressure"
+    state_class: "measurement"
+    unit_of_measurement: "bar"
+    accuracy_decimals: 1
+    filters:
+      - min:
+          window_size: ${dynamic_pressure_measures}
+          send_every: ${dynamic_pressure_measures}
+
+  - platform: adc
+    id: water_pressure_sensor_2_voltage
+    name: "Water pressure sensor 2 votage"
+    pin: ${pressure_sensor_2_pin}
+    update_interval: never
+    device_class: "voltage"
+    state_class: "measurement"
+    attenuation: auto
+    accuracy_decimals: 3
+    unit_of_measurement: "V"
+    entity_category: "diagnostic"
+    on_value:
+      then:
+        - sensor.template.publish:
+            id: current_water_pressure_2
+            state: !lambda "return x;"
+
+  - platform: template
+    id: current_water_pressure_2
+    update_interval: never
+    device_class: "pressure"
+    state_class: "measurement"
+    accuracy_decimals: 2
+    unit_of_measurement: "bar"
+    lambda: "return id(water_pressure_sensor_2_voltage).state;"
+    filters:
+      - calibrate_linear:
+          method: least_squares
+          datapoints:
+            - 0.4 -> 0.0
+            - 0.9 -> 1.0
+            - 1.45 -> 2.0
+            - 2.0 -> 3.0
+      - clamp:
+          min_value: ${min_water_pressure}
+          max_value: ${max_water_pressure}
+
+  - platform: template
+    id: static_water_pressure_2
+    name: "Static water pressure 2"
+    accuracy_decimals: 1
+    update_interval: never
+    device_class: "pressure"
+    state_class: "measurement"
+    unit_of_measurement: "bar"
+    filters:
+      - sliding_window_moving_average:
+          window_size: ${static_pressure_measures}
+          send_every: ${static_pressure_measures}
+
+  - platform: template
+    id: dynamic_water_pressure_2
+    name: "Dynamic water pressure 2"
+    update_interval: never
+    accuracy_decimals: 1
+    device_class: "pressure"
+    state_class: "measurement"
+    unit_of_measurement: "bar"
+    filters:
+      - min:
+          window_size: ${dynamic_pressure_measures}
+          send_every: ${dynamic_pressure_measures}
+
+  - platform: combination
+    id: median_static_water_pressure
+    name: "Median static water pressure"
+    type: median
+    state_class: "measurement"
+    sources:
+      - source: static_water_pressure_1
+      - source: static_water_pressure_2
+
+  - platform: template
+    id: water_filter_pressure_loss
+    name: "Water filter pressure loss"
+    icon: "mdi:gauge"
+    lambda: |-
+      if (
+          isnan(id(dynamic_water_pressure_1).state) or
+          isnan(id(dynamic_water_pressure_2).state)
+      ) return {};
+      return id(dynamic_water_pressure_1).state - id(dynamic_water_pressure_2).state;
+    update_interval: 60s
+    device_class: "pressure"
+    state_class: "measurement"
+    accuracy_decimals: 2
+    unit_of_measurement: "bar"
+    filters:
+      - clamp:
+          min_value: 0
+      - sliding_window_moving_average:
+          window_size: 1440
+          send_every: 1
+
+  - platform: copy
+    id: water_filter_pressure_loss_percent
+    name: "Water filter pressure loss percent"
+    icon: "mdi:gauge"
+    source_id: "water_filter_pressure_loss"
+    unit_of_measurement: "%"
+    device_class: ""
+    state_class: "measurement"
+    entity_category: "diagnostic"
+    accuracy_decimals: 0
+    filters:
+      - lambda: "return 100.0 - (x * (100.0 / id(water_filter_max_pressure_loss).state));"
+      - lambda: |-
+          if (x >= 90) return 100.0;
+          return x;
+      - clamp:
+          min_value: 0
+          max_value: 100
+
+  - platform: template
+    id: water_filter_remaining_capacity
+    name: "Water filter remaining capacity"
+    icon: "mdi:car-coolant-level"
+    lambda: "return id(water_filter_capacity);"
+    unit_of_measurement: "L"
+    state_class: "measurement"
+    accuracy_decimals: 0
+    update_interval: never
+
+  - platform: copy
+    id: water_filter_remaining_capacity_percent
+    name: "Water filter remaining capacity percent"
+    icon: "mdi:car-coolant-level"
+    source_id: "water_filter_remaining_capacity"
+    unit_of_measurement: "%"
+    state_class: "measurement"
+    entity_category: "diagnostic"
+    accuracy_decimals: 1
+    filters:
+      - lambda: "return 100.0 - ((id(water_filter_max_capacity).state - x) * (100.0 / id(water_filter_max_capacity).state));"
+      - clamp:
+          min_value: 0
+          max_value: 100
+
+  - platform: template
+    id: water_filter_remaining_lifetime
+    name: "Water filter remaining lifetime"
+    icon: "mdi:heart"
+    lambda: |-
+      if (isnan(id(water_filter_pressure_loss_percent).state)) return id(water_filter_remaining_capacity_percent).state;
+      return std::min(id(water_filter_pressure_loss_percent).state, id(water_filter_remaining_capacity_percent).state);
+    unit_of_measurement: "%"
+    state_class: "measurement"
+    accuracy_decimals: 1
+
+  - platform: pulse_meter
+    id: water_meter
+    pin:
+      number: ${water_meter_pin}
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    unit_of_measurement: "L/min"
+    name: "Water flow rate"
+    device_class: "volume_flow_rate"
+    state_class: "measurement"
+    icon: "mdi:water"
+    internal_filter: ${pulse_min_length}
+    internal_filter_mode: PULSE
+    timeout: ${pulse_timeout}
+    on_value:
+      then:
+        - globals.set:
+            id: water_meter_running
+            value: !lambda |-
+              if (x == 0.0 || isnan(x)) return false;
+              return true;
+
+    total:
+      unit_of_measurement: "L"
+      device_class: "water"
+      id: water_consumption
+      name: "Water consumption"
+      state_class: "total_increasing"
+      icon: "mdi:counter"
+      filters:
+        - debounce: ${pulse_debounce}
+      on_value:
+        then:
+          - script.execute: display_timer
+          - if:
+              condition:
+                - binary_sensor.is_off: pending_error
+              then:
+                - light.turn_on:
+                    id: led
+                    red: 0%
+                    green: 0%
+                    blue: 100%
+                    brightness: 50%
+                    flash_length: 100ms
+          - script.execute:
+              id: update_water_filter_capacity
+              difference: !lambda "return id(water_meter_pulses) - x;"
+          - globals.set:
+              id: water_meter_pulses
+              value: !lambda "return x;"
+          - if:
+              condition:
+                lambda: "return id(calibrating);"
+              then:
+                - globals.set:
+                    id: calibrating
+                    value: "false"
+              else:
+                - script.execute: update_water_temperature
+                - script.execute: update_dynamic_pressure
+                - script.execute:
+                    id: water_dose_counter
+                    reset: "false"
+
+  - platform: template
+    id: single_water_dose
+    name: "Single water dose"
+    icon: "mdi:cup-water"
+    state_class: "total"
+    accuracy_decimals: 0
+    unit_of_measurement: "L"
+    update_interval: never
+
+  - platform: dallas_temp
+    address: 0x632655d445c65c28
+    id: "current_water_temperature"
+    name: "Current water temperature"
+    icon: "mdi:thermometer-water"
+    accuracy_decimals: 1
+    state_class: "measurement"
+    device_class: "temperature"
+    unit_of_measurement: "°C"
+    update_interval: never
+    filters:
+      - skip_initial: 10
+      - min:
+          window_size: 720
+          send_every: 1
+    on_value:
+      then:
+        - lambda: |-
+            if(x < 0 || isnan(x)) id(component_status)[2] = false;
+            id(component_status)[2] = true;
+
+number:
+  - platform: template
+    id: low_filter_remaining_lifetime
+    name: "Replace filter warning threshold"
+    optimistic: True
+    min_value: 1
+    max_value: 15
+    step: 1
+    unit_of_measurement: "%"
+    initial_value: 5
+    restore_value: True
+    entity_category: "config"
+
+  - platform: template
+    id: water_filter_max_pressure_loss
+    name: "Max water filter pressure loss"
+    icon: "mdi:gauge-low"
+    optimistic: True
+    min_value: 0.1
+    max_value: 0.5
+    step: 0.1
+    unit_of_measurement: "bar"
+    device_class: "pressure"
+    initial_value: 0.5
+    restore_value: True
+    entity_category: "config"
+
+  - platform: template
+    id: water_filter_max_capacity
+    name: "Max water filter capacity"
+    icon: "mdi:water-circle"
+    optimistic: True
+    min_value: 0
+    max_value: 50000
+    step: 1000
+    unit_of_measurement: "L"
+    device_class: "volume"
+    initial_value: 35000
+    restore_value: True
+    entity_category: "config"
+    on_value:
+      then:
+        - script.execute:
+            id: update_water_filter_capacity
+            difference: !lambda "return x - id(prev_water_filter_max_capacity);"
+        - globals.set:
+            id: prev_water_filter_max_capacity
+            value: !lambda "return x;"
+
+  - platform: template
+    id: max_single_water_dose
+    name: "Max single water dose"
+    icon: "mdi:water-alert"
+    optimistic: True
+    min_value: 5
+    max_value: 200
+    step: 5
+    unit_of_measurement: "L"
+    initial_value: 100
+    restore_value: True
+    entity_category: "config"
+
+switch:
+  - platform: template
+    id: water_filter_support
+    name: "Water filter support"
+    icon: "mdi:air-filter"
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: True

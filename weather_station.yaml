@@ -1,0 +1,365 @@
+substitutions:
+  name: "honey"
+  friendly_name: "honey"
+
+  # Project
+  platform: "esp32dev"
+  manufacturer: "espressif"
+  project_name: "weather-station"
+  version: "2.0.0"
+
+  # Config
+  default_update_interval: 60s
+
+  # Deep sleep
+  awake_time: 30s
+  deep_sleep_time: 5min
+
+  # Touch
+  setup_mode: False
+  touch_threshold: "300"
+  touch_wakeup: True
+  touch_awake_time: 30s
+  iir_filter: 10ms
+
+  # Weather
+  standard_altitude: "59.89"
+
+  # Radiation
+  geiger_tube_sensitivity: 105
+
+  # I2C
+  i2c_freq: 100kHz
+  i2c_display: 0x27
+  i2c_temperature: 0x44
+  i2c_pressure: 0x76
+
+  # GPIOs
+  pin_touch: GPIO32
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2024.6.0
+  name_add_mac_suffix: false
+  project:
+    name: ${manufacturer}.${project_name}
+    version: ${version}
+  on_boot:
+    priority: -10
+    then:
+      - lambda: "id(main_display).no_backlight();"
+  on_shutdown:
+    then:
+      - lambda: "id(main_display).no_backlight();"
+
+external_components:
+  - source: github://krbaker/esphome-radsens@v1.0.1
+    components: [ radsens ]
+    refresh: 600s
+
+esp32:
+  board: ${platform}
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+  baud_rate: 0
+
+# Enable Home Assistant API
+api:
+  services:
+  - service: allow_deep_sleep
+    then:
+      - deep_sleep.allow: deep_sleep_1
+  - service: prevent_deep_sleep
+    then:
+      - deep_sleep.prevent: deep_sleep_1
+
+ota:
+  - platform: esphome
+    password: !secret honey_ota_password
+
+wifi:
+  ssid: !secret wifi_iot_ssid
+  password: !secret wifi_iot_password
+  fast_connect: True
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Honey Fallback Hotspot"
+    password: !secret honey_fallback_password
+
+captive_portal:
+
+i2c:
+  scan: False
+  frequency: ${i2c_freq}
+
+deep_sleep:
+  run_duration:
+    default: ${awake_time}
+    touch_wakeup_reason: ${touch_awake_time}
+  sleep_duration: ${deep_sleep_time}
+  id: deep_sleep_1
+  touch_wakeup: ${touch_wakeup}
+
+display:
+  - platform: lcd_pcf8574
+    dimensions: 20x4
+    address: ${i2c_display}
+    id: "main_display"
+    user_characters:
+      - position: 0
+        data:
+          - 0b00000
+          - 0b00111
+          - 0b00101
+          - 0b00101
+          - 0b00101
+          - 0b00101
+          - 0b00101
+          - 0b00101
+      - position: 1
+        data:
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b11000
+          - 0b11000
+          - 0b00000
+      - position: 2
+        data:
+          - 0b00101
+          - 0b00101
+          - 0b00111
+          - 0b00111
+          - 0b00111
+          - 0b00111
+          - 0b00111
+          - 0b00111
+      - position: 3
+        data:
+          - 0b11000
+          - 0b11000
+          - 0b00000
+          - 0b00000
+          - 0b11000
+          - 0b11000
+          - 0b00000
+          - 0b00000
+      - position: 4
+        data:
+          - 0b00111
+          - 0b00111
+          - 0b00111
+          - 0b00111
+          - 0b00111
+          - 0b00111
+          - 0b00111
+          - 0b00111
+      - position: 5
+        data:
+          - 0b00111
+          - 0b00111
+          - 0b01110
+          - 0b11100
+          - 0b11110
+          - 0b11111
+          - 0b01111
+          - 0b00111
+      - position: 6
+        data:
+          - 0b00000
+          - 0b00000
+          - 0b10000
+          - 0b01000
+          - 0b11000
+          - 0b11000
+          - 0b10000
+          - 0b00000
+      - position: 7
+        data:
+          - 0b01100
+          - 0b10010
+          - 0b10010
+          - 0b01100
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b00000
+    lambda: |-
+      it.printf(0, 0, "\x08\x01" "Temp: %9.1f \x07" "C", id(air_temperature).state);
+      it.printf(0, 1, "\x02\x03" "Humidity: %3.0f %% RH", id(air_humidity).state);
+      it.printf(0, 2, "\x04 " "Pressure: %3.0f mmHg", id(atmospheric_pressure).state * 0.750062);
+      it.printf(0, 3, "\x05\x06" "Rad: %7.2f uSv/h", id(dynamic_intensity).state);
+
+esp32_touch:
+  setup_mode: ${setup_mode}
+  iir_filter: ${iir_filter}
+
+button:
+  - platform: restart
+    name: "Restart node"
+
+binary_sensor:
+  - platform: status
+    name: "Node status"
+
+  - platform: esp32_touch
+    id: "touch_pad"
+    pin: ${pin_touch}
+    threshold: "${touch_threshold}"
+
+  - platform: template
+    id: temperature_and_pressure_available
+    lambda: |-
+      if (isnan(id(air_temperature).state) || isnan(id(atmospheric_pressure).state)) {
+        return false;
+      } else {
+        return true;
+      }
+    on_press:
+      then:
+        - sensor.template.publish:
+            id: equivalent_sea_level_pressure
+            state: !lambda |-
+              return id(atmospheric_pressure).state / powf(1 - ((0.0065 * ${standard_altitude}) /
+                (id(air_temperature).state + (0.0065 * ${standard_altitude}) + 273.15)), 5.257); // in hPa
+
+  - platform: template
+    id: temperature_and_humidity_available
+    lambda: |-
+      if (isnan(id(air_temperature).state) || isnan(id(air_humidity).state)) {
+        return false;
+      } else {
+        return true;
+      }
+    on_press:
+      then:
+        - sensor.template.publish:
+            id: absolute_humidity
+            state: !lambda |-
+              const float mw = 18.01534;    // molar mass of water g/mol
+              const float r = 8.31447215;   // Universal gas constant J/mol
+              return (6.112 * powf(2.718281828, (17.67 * id(air_temperature).state) /
+                (id(air_temperature).state + 243.5)) * id(air_humidity).state * mw) /
+                ((273.15 + id(air_temperature).state) * r); // in grams/m^3
+
+        - sensor.template.publish:
+            id: dew_point
+            state: !lambda |-
+              return (243.5 * (log(id(air_humidity).state / 100) + ((17.67 * id(air_temperature).state) /
+                (243.5 + id(air_temperature).state))) / (17.67 - log(id(air_humidity).state / 100)-
+                ((17.67 * id(air_temperature).state) / (243.5 + id(air_temperature).state))));
+
+        - sensor.template.publish:
+            id: heat_index
+            state: !lambda |-
+              float heat_index;
+              float temperature = (id(air_temperature).state * (9.0 / 5.0) + 32.0);
+              float humidity = id(air_humidity).state;
+              if (temperature <= 40) {
+                heat_index = temperature;
+              } else {
+                heat_index = 0.5 * (temperature + 61.0 + ((temperature - 68.0) * 1.2) + (humidity * 0.094));
+              }
+              if (heat_index >= 79) {
+                heat_index = -42.379 +
+                  (2.04901523 + -0.22475541 * humidity + temperature * (-0.00683783 + 0.00122874 * humidity)) * temperature +
+                  (10.14333127 + humidity * (-0.05481717 + temperature * (0.00085282 + -0.00000199 * temperature))) * humidity;
+                  if ((humidity < 13) && (temperature >= 80.0) && (temperature) <= 112.0) {
+                    heat_index -= ((13.0 - humidity) * 0.25) * sqrt((17.0 - abs(temperature - 95.0)) * 0.05882);
+                  } else if ((humidity > 85.0) && (temperature >= 80.0) && (temperature <= 87.0)) {
+                    heat_index += (0.02 * (humidity - 85.0) * (87.0 - temperature));
+                  }
+              }
+              return (heat_index - 32.0) * (5.0 / 9.0);
+
+radsens:
+  sensitivity: ${geiger_tube_sensitivity}
+
+sensor:
+  - platform: wifi_signal
+    name: "WLAN RSSI"
+    id: wlan_rssi
+    update_interval: ${default_update_interval}
+
+  - platform: sht3xd
+    temperature:
+      name: "Air temperature"
+      id: air_temperature
+      accuracy_decimals: 1
+    humidity:
+      name: "Air humidity"
+      id: air_humidity
+      accuracy_decimals: 1
+    address: ${i2c_temperature}
+    heater_enabled: false
+    update_interval: ${default_update_interval}
+
+  - platform: bmp280_i2c
+    temperature:
+      name: "Chassis temperature"
+    pressure:
+      name: "Atmospheric pressure"
+      id: atmospheric_pressure
+    address: ${i2c_pressure}
+    update_interval: ${default_update_interval}
+
+  - platform: template
+    id: absolute_humidity
+    name: "Absolute humidity"
+    accuracy_decimals: 1
+    icon: "mdi:water"
+    unit_of_measurement: "g/m³"
+    state_class: "measurement"
+
+  - platform: template
+    id: equivalent_sea_level_pressure
+    name: "Equivalent sea-level pressure"
+    icon: "mdi:gauge"
+    unit_of_measurement: "hPa"
+    state_class: "measurement"
+
+  - platform: template
+    id: dew_point
+    name: "Dew Point"
+    unit_of_measurement: "°C"
+    icon: "mdi:thermometer-alert"
+    state_class: "measurement"
+
+  - platform: template
+    id: heat_index
+    name: "Heat index"
+    unit_of_measurement: "°C"
+    icon: "mdi:sun-thermometer"
+    state_class: "measurement"
+
+  - platform: radsens
+    dynamic_intensity:
+      id: dynamic_intensity
+      name: "Dynamic Intensity"
+      unit_of_measurement: "μSv/h"
+      filters:
+        - multiply: 0.01
+    static_intensity:
+      name: "Static Intensity"
+      unit_of_measurement: "μSv/h"
+      filters:
+        - multiply: 0.01
+
+switch:
+  - platform: radsens
+    control_led:
+      name: "Impulse LED"
+      restore_mode: RESTORE_DEFAULT_ON
+    control_high_voltage:
+      name: "High Voltage Generator"
+      restore_mode: RESTORE_DEFAULT_ON
+    control_low_power:
+      name: "Low Power Mode"
+      restore_mode: RESTORE_DEFAULT_OFF

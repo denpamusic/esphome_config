@@ -1,0 +1,1039 @@
+substitutions:
+  name: "avocado"
+  friendly_name: "avocado"
+
+  # Project
+  platform: "esp32dev"
+  manufacturer: "espressif"
+  project_name: "alutech-roteo"
+  version: "1.4.4"
+
+  # Config
+  transit_time_lower_bound: "2"
+  transit_time_upper_bound: "5"
+  output_freq: "4000Hz"
+  output_level: "0.5"
+  motion_sensor: "binary_sensor.munin_home_motion_1"
+
+  # Volume
+  min_volume: "0.0"
+  max_volume: "1.0"
+
+  # Beep
+  short_beep_length: "100"
+  long_beep_length: "500"
+
+  # RTTTL
+  rtttl_confirm: "0"
+  rtttl_reject: "1"
+  rtttl_warning: "2"
+  rtttl_success: "3"
+  rtttl_movement: "4"
+
+  # Startup
+  startup_beep_volume: "1.0"
+  startup_beep_length: "100"
+
+  # GPIOs
+  status_led_pin: 23
+  led_strip_pin: 19
+  relay1_pin: 32
+  relay2_pin: 33
+  relay3_pin: 25
+  relay4_pin: 26
+  buzzer_pin: 17
+  vibration_sense_pin: 18
+  move_sense_pin: 21
+  rx_pin: RX
+
+  # Error
+  error_siren: "Can't play tone while sounding the siren."
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    then:
+      - sensor.template.publish:
+          id: pedestrian_gate_open_number
+          state: !lambda "return id(pedestrian_gate_open_count);"
+      - sensor.template.publish:
+          id: vehicle_gate_open_number
+          state: !lambda "return id(vehicle_gate_open_count);"
+      - sensor.template.publish:
+          id: gate_move_time
+          state: !lambda "return id(gate_move_length);"
+      - script.execute:
+          id: turn_on_buzzer
+          duration_ms: ${startup_beep_length}
+          volume: ${startup_beep_volume}
+          priority: False
+  project:
+    name: "${manufacturer}.${project_name}"
+    version: ${version}
+
+preferences:
+  flash_write_interval: 10min
+
+esp32:
+  board: ${platform}
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+  baud_rate: 0
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret avocado_api_key
+  services:
+    - service: beep
+      variables:
+        duration_ms: int
+        priority: bool
+        volume: int
+      then:
+        - script.execute:
+            id: play_beep
+            duration_ms: !lambda "return duration_ms;"
+            priority: !lambda "return priority;"
+            volume: !lambda "return (float)volume / 100.0f;"
+
+    - service: siren
+      variables:
+        priority: bool
+        volume: int
+      then:
+        - script.execute:
+            id: play_siren
+            priority: !lambda "return priority;"
+            volume: !lambda "return (float)volume / 100.0f;"
+
+    - service: calibrate_transit_time
+      then:
+        - script.execute: calibrate_transit_time_script
+
+    - service: reset_pedestrian_gate_counter
+      then:
+        - globals.set:
+            id: pedestrian_gate_open_count
+            value: "0"
+        - sensor.template.publish:
+            id: pedestrian_gate_open_number
+            state: !lambda "return id(pedestrian_gate_open_count);"
+
+    - service: reset_vehicle_gate_counter
+      then:
+        - globals.set:
+            id: vehicle_gate_open_count
+            value: "0"
+        - sensor.template.publish:
+            id: vehicle_gate_open_number
+            state: !lambda "return id(vehicle_gate_open_count);"
+
+    - service: reset_gate_state
+      then:
+          - globals.set:
+              id: pedestrian_gate_open_bool
+              value: "false"
+          - globals.set:
+              id: vehicle_gate_open_bool
+              value: "false"
+
+ota:
+  - platform: esphome
+    password: !secret avocado_ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Avocado Fallback Hotspot"
+    password: !secret avocado_fallback_password
+
+captive_portal:
+
+globals:
+  - id: gate_move_start_time
+    type: time_t
+    restore_value: False
+    initial_value: "0"
+
+  - id: gate_move_length
+    type: time_t
+    restore_value: True
+    initial_value: "0"
+
+  - id: gate_stuck_bool
+    type: bool
+    restore_value: False
+    initial_value: "false"
+
+  - id: pedestrian_gate_open_bool
+    type: bool
+    restore_value: True
+    initial_value: "false"
+
+  - id: pedestrian_gate_open_count
+    type: unsigned int
+    restore_value: True
+    initial_value: "0"
+
+  - id: pedestrian_gate_open_time
+    type: time_t
+    restore_value: True
+    initial_value: "0"
+
+  - id: vehicle_gate_open_bool
+    type: bool
+    restore_value: True
+    initial_value: "false"
+
+  - id: vehicle_gate_open_count
+    type: unsigned int
+    restore_value: True
+    initial_value: "0"
+
+  - id: vehicle_gate_open_time
+    type: time_t
+    restore_value: True
+    initial_value: "0"
+
+  - id: tones
+    type: std::vector<std::string>
+    restore_value: False
+    initial_value: '{
+      "Confirm:d=9,o=6,b=90:64c,64e,64g",
+      "Reject:d=8,o=4,b=180:e.,e",
+      "Warning:d=8,o=5,b=100:a,e,a,e,a,e,a,e,a,e",
+      "Success:d=8,o=6,b=180:g,p,g",
+      "Movement:d=8,o=6,b=250:3g,4p,3g,4p,3g,3p,8g,10p,8g",
+    }'
+
+time:
+  - platform: gps
+    id: gps_time
+
+script:
+  - id: open_vehicle_gate
+    then:
+      if:
+        condition:
+          - binary_sensor.is_on: pedestrian_gate_open
+        then:
+          - button.press: pedestrian
+          - delay: 2s
+          - wait_until:
+              binary_sensor.is_off: gate_moving
+          - delay: 1s
+          - button.press: step_by_step
+        else:
+          - button.press: step_by_step
+
+  - id: open_pedestrian_gate
+    then:
+      if:
+        condition:
+          - binary_sensor.is_on: vehicle_gate_open
+        then:
+          - button.press: step_by_step
+          - delay: 2s
+          - wait_until:
+              binary_sensor.is_off: gate_moving
+          - delay: 1s
+          - button.press: pedestrian
+        else:
+          - button.press: pedestrian
+
+  - id: calibrate_transit_time_script
+    then:
+      if:
+        condition:
+          - binary_sensor.is_off: gate_moving
+        then:
+          - button.press: pedestrian
+          - delay: 2s
+          - wait_until:
+              binary_sensor.is_off: gate_moving
+          - number.set:
+              id: pedestrian_gate_opening_time
+              value: !lambda "return (id(gps_time).now().timestamp - id(gate_move_start_time));"
+          - globals.set:
+              id: pedestrian_gate_open_bool
+              value: "true"
+          - button.press: pedestrian
+          - delay: 2s
+          - wait_until:
+              binary_sensor.is_off: gate_moving
+          - delay: 2s
+          - button.press: step_by_step
+          - delay: 2s
+          - wait_until:
+              binary_sensor.is_off: gate_moving
+          - number.set:
+              id: vehicle_gate_opening_time
+              value: !lambda "return (id(gps_time).now().timestamp - id(gate_move_start_time));"
+          - globals.set:
+              id: vehicle_gate_open_bool
+              value: "true"
+          - button.press: step_by_step
+
+  - id: turn_on_rtttl
+    parameters:
+      tone: int
+    then:
+      - if:
+          condition:
+            switch.is_on: siren
+          then:
+            - logger.log: ${error_siren}
+            - script.stop: turn_on_rtttl
+
+      - if:
+          condition:
+            or:
+              - switch.is_off: mute_mode
+          then:
+            - lambda: "id(buzzer).set_max_power(id(volume).state / 100.0f);"
+            - rtttl.play: !lambda "return id(tones)[tone].c_str();"
+
+  - id: turn_on_buzzer
+    parameters:
+      duration_ms: int
+      priority: bool
+      volume: float
+    then:
+      - if:
+          condition:
+            or:
+              - switch.is_off: mute_mode
+          then:
+            - lambda: "id(buzzer).set_max_power(volume);"
+            - output.turn_on: buzzer
+            - output.ledc.set_frequency:
+                id: buzzer
+                frequency: ${output_freq}
+            - output.set_level:
+                id: buzzer
+                level: ${output_level}
+            - delay: !lambda "return duration_ms;"
+            - output.turn_off: buzzer
+
+  - id: play_beep
+    parameters:
+      duration_ms: int
+      priority: bool
+      volume: float
+    then:
+      - if:
+          condition:
+              switch.is_on: siren
+          then:
+              - logger.log: ${error_siren}
+          else:
+            - script.execute:
+                id: turn_on_buzzer
+                duration_ms: !lambda "return duration_ms;"
+                priority: !lambda "return priority;"
+                volume: !lambda "return volume;"
+            - script.wait: turn_on_buzzer
+
+  - id: play_siren
+    parameters:
+      priority: bool
+      volume: float
+    then:
+      - while:
+          condition:
+            - lambda: "return true;"
+          then:
+            - repeat:
+                count: 3
+                then:
+                  - script.execute:
+                      id: turn_on_buzzer
+                      duration_ms: 500
+                      priority: !lambda "return priority;"
+                      volume: !lambda "return volume;"
+                  - script.wait: turn_on_buzzer
+                  - delay: 250ms
+            - delay: 750ms
+
+  - id: fx_move_start
+    then:
+      - script.stop: fx_movement
+      - script.stop: fx_vibration
+      - script.stop: fx_move_done
+      - script.execute:
+          id: turn_on_rtttl
+          tone: ${rtttl_confirm}
+      - if:
+          condition:
+            - lambda: return (id(pedestrian_gate_open_bool) || id(vehicle_gate_open_bool));
+          then:
+            - light.turn_on:
+                id: light_strip
+                brightness: 100%
+                red: 100%
+                green: 50%
+                blue: 0%
+                effect: "Scroll Up"
+          else:
+            - light.turn_on:
+                id: light_strip
+                brightness: 100%
+                red: 100%
+                green: 50%
+                blue: 0%
+                effect: "Scroll Down"
+
+  - id: fx_move_done
+    mode: restart
+    then:
+      - script.execute:
+          id: turn_on_rtttl
+          tone: ${rtttl_success}
+      - if:
+          condition:
+            - lambda: return id(pedestrian_gate_open_bool) || id(vehicle_gate_open_bool);
+          then:
+            - light.turn_on:
+                id: light_strip
+                brightness: 100%
+                red: 0%
+                green: 100%
+                blue: 0%
+                effect: "None"
+            - delay: 30s
+            - light.turn_off: light_strip
+          else:
+            - light.turn_off: light_strip
+            - delay: 10s
+
+  - id: fx_reject
+    then:
+      - script.stop: fx_movement
+      - script.stop: fx_vibration
+      - script.execute:
+          id: turn_on_rtttl
+          tone: ${rtttl_reject}
+      - light.turn_on:
+          id: light_strip
+          brightness: 100%
+          red: 100%
+          green: 0%
+          blue: 0%
+          effect: "Fast Pulse"
+      - delay: 500ms
+      - light.turn_off: light_strip
+
+  - id: fx_move_stuck
+    then:
+      - script.execute:
+          id: turn_on_rtttl
+          tone: ${rtttl_reject}
+      - light.turn_on:
+          id: light_strip
+          brightness: 100%
+          red: 100%
+          green: 0%
+          blue: 0%
+          effect: "Slow Pulse"
+
+  - id: fx_vibration
+    then:
+      - script.execute:
+          id: turn_on_rtttl
+          tone: ${rtttl_warning}
+      - light.turn_on:
+          id: light_strip
+          brightness: 100%
+          red: 0%
+          green: 0%
+          blue: 100%
+          effect: "Fast Pulse"
+      - delay: 3s
+      - light.turn_off: light_strip
+
+  - id: fx_movement
+    mode: restart
+    then:
+      - script.execute:
+          id: turn_on_rtttl
+          tone: ${rtttl_movement}
+      - light.turn_on:
+          id: light_strip
+          brightness: 100%
+          red: 100%
+          green: 0%
+          blue: 0%
+          effect: "Fast Pulse"
+      - delay: 2s
+      - light.turn_on:
+          id: light_strip
+          effect: "32s Timer"
+      - delay: 32s
+      - light.turn_off: light_strip
+
+binary_sensor:
+  - platform: status
+    name: "Node status"
+
+  # Indicates if gate is stuck.
+  - platform: template
+    name: "Gate stuck"
+    id: gate_stuck
+    lambda: "return id(gate_stuck_bool);"
+    device_class: "problem"
+
+  # Indicates if pedestrian gate is open or closed (starts as closed)
+  - platform: template
+    id: pedestrian_gate_open
+    lambda: return id(pedestrian_gate_open_bool);
+    on_press:
+      then:
+        - sensor.template.publish:
+            id: pedestrian_gate_open_number
+            state: !lambda "return ++id(pedestrian_gate_open_count);"
+        - globals.set:
+            id: pedestrian_gate_open_time
+            value: !lambda "return id(gps_time).now().timestamp;"
+        - component.update: pedestrian_gate_last_open_time
+
+  # Indicates if vehicle gate is open or closed (starts as closed)
+  - platform: template
+    id: vehicle_gate_open
+    lambda: return id(vehicle_gate_open_bool);
+    on_press:
+      then:
+        - sensor.template.publish:
+            id: vehicle_gate_open_number
+            state: !lambda "return ++id(vehicle_gate_open_count);"
+        - globals.set:
+            id: vehicle_gate_open_time
+            value: !lambda "return id(gps_time).now().timestamp;"
+        - component.update: vehicle_gate_last_open_time
+
+  - platform: homeassistant
+    id: gate_motion
+    entity_id: "${motion_sensor}"
+    on_press:
+      then:
+        if:
+          condition:
+            and:
+              - binary_sensor.is_off: pedestrian_gate_open
+              - binary_sensor.is_off: vehicle_gate_open
+              - binary_sensor.is_off: gate_moving
+              - not:
+                - script.is_running: fx_move_done
+          then:
+            - script.execute: fx_movement
+
+  - platform: gpio
+    name: "Gate vibration"
+    pin:
+      number: ${vibration_sense_pin}
+      mode: input
+    device_class: "vibration"
+    filters:
+      - delayed_on: !lambda "return (10.0 - id(vibration_sensitivity).state) * 10.0;"
+      - delayed_off: 1s
+    on_press:
+      then:
+        if:
+          condition:
+            and:
+              - binary_sensor.is_off: pedestrian_gate_open
+              - binary_sensor.is_off: vehicle_gate_open
+              - binary_sensor.is_off: gate_moving
+              - not:
+                - script.is_running: fx_move_done
+          then:
+            - script.execute: fx_vibration
+
+  - platform: gpio
+    pin:
+      number: ${move_sense_pin}
+      mode:
+        input: true
+        pullup: true
+    name: "Gate moving"
+    id: gate_moving
+    icon: "mdi:gate-alert"
+    device_class: "moving"
+    on_press:
+      then:
+        - light.turn_on:
+            id: gate_moving_light
+            effect: strobe
+        - script.execute: fx_move_start
+        - globals.set:
+            id: gate_move_start_time
+            value: !lambda "return id(gps_time).now().timestamp;"
+    on_release:
+      then:
+        - light.turn_off: gate_moving_light
+        - globals.set:
+            id: gate_move_length
+            value: !lambda "return id(gps_time).now().timestamp - id(gate_move_start_time);"
+        - sensor.template.publish:
+            id: gate_move_time
+            state: !lambda "return id(gate_move_length);"
+        - if:
+            condition:
+              - lambda: |-
+                  return
+                    id(pedestrian_gate_opening_time).state > ${transit_time_lower_bound} &&
+                    id(gate_move_length) > (id(pedestrian_gate_opening_time).state - ${transit_time_lower_bound}) &&
+                    id(gate_move_length) < (id(pedestrian_gate_opening_time).state + ${transit_time_upper_bound});
+            then:
+              - globals.set:
+                  id: pedestrian_gate_open_bool
+                  value: !lambda "return !id(pedestrian_gate_open_bool);"
+        - if:
+            condition:
+              - lambda: |-
+                  return
+                    id(vehicle_gate_opening_time).state > ${transit_time_lower_bound} &&
+                    id(gate_move_length) > (id(vehicle_gate_opening_time).state - ${transit_time_lower_bound}) &&
+                    id(gate_move_length) < (id(vehicle_gate_opening_time).state + ${transit_time_upper_bound});
+            then:
+              - globals.set:
+                  id: vehicle_gate_open_bool
+                  value: !lambda "return !id(vehicle_gate_open_bool);"
+        - if:
+            condition:
+              - lambda: |-
+                  return id(gate_move_length) >= (id(vehicle_gate_opening_time).state + ${transit_time_upper_bound});
+            then:
+              - globals.set:
+                  id: gate_stuck_bool
+                  value: "true"
+              - globals.set:
+                  id: vehicle_gate_open_bool
+                  value: "true"
+              - script.execute: fx_move_stuck
+            else:
+              - globals.set:
+                  id: gate_stuck_bool
+                  value: "false"
+              - script.execute: fx_move_done
+        - globals.set:
+            id: gate_move_start_time
+            value: "0"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP address"
+    mac_address:
+      name: "MAC address"
+
+sensor:
+  - platform: wifi_signal
+    name: "WLAN RSSI"
+    update_interval: 60s
+
+  - platform: template
+    id: pedestrian_gate_open_number
+    name: "Pedestrian gate opens"
+    accuracy_decimals: 0
+    update_interval: never
+    state_class: "total_increasing"
+    icon: "mdi:counter"
+
+  - platform: template
+    id: pedestrian_gate_last_open_time
+    name: "Last pedestrian gate open time"
+    lambda: |-
+      if (id(pedestrian_gate_open_time) > 0) {
+        return id(pedestrian_gate_open_time);
+      } else {
+        return {};
+      }
+    update_interval: never
+    device_class: "timestamp"
+
+  - platform: template
+    id: vehicle_gate_open_number
+    name: "Vehicle gate opens"
+    accuracy_decimals: 0
+    update_interval: never
+    state_class: "total_increasing"
+    icon: "mdi:counter"
+
+  - platform: template
+    id: vehicle_gate_last_open_time
+    name: "Last vehicle gate open time"
+    lambda: |-
+      if (id(vehicle_gate_open_time) > 0) {
+        return id(vehicle_gate_open_time);
+      } else {
+        return {};
+      }
+    update_interval: never
+    device_class: "timestamp"
+
+  - platform: template
+    id: gate_move_time
+    name: "Gate move time"
+    update_interval: never
+    accuracy_decimals: 0
+    device_class: "duration"
+    unit_of_measurement: "s"
+    entity_category: "diagnostic"
+
+number:
+  - platform: template
+    id: pedestrian_gate_opening_time
+    name: "Pedestrian gate opening time"
+    restore_value: true
+    min_value: 0
+    max_value: 60
+    step: 1
+    update_interval: 60s
+    optimistic: true
+    unit_of_measurement: "s"
+    entity_category: "config"
+
+  - platform: template
+    id: vehicle_gate_opening_time
+    name: "Vehicle gate opening time"
+    restore_value: true
+    min_value: 0
+    max_value: 60
+    step: 1
+    update_interval: 60s
+    optimistic: true
+    unit_of_measurement: "s"
+    entity_category: "config"
+
+  - platform: template
+    id: vibration_sensitivity
+    name: "Vibration sensitivity"
+    icon: "mdi:vibrate"
+    min_value: 1
+    max_value: 10
+    step: 1
+    optimistic: True
+    restore_value: True
+    initial_value: 5
+    entity_category: "config"
+
+  - platform: template
+    id: volume
+    name: "Volume"
+    icon: "mdi:volume-medium"
+    min_value: 1
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+    optimistic: True
+    restore_value: True
+    initial_value: 100
+    entity_category: "config"
+
+cover:
+  - platform: template
+    name: "Pedestrian gate"
+    device_class: "door"
+    lambda: |-
+      if (id(pedestrian_gate_open).state) {
+        return COVER_OPEN;
+      } else {
+        return COVER_CLOSED;
+      }
+    open_action:
+        - if:
+            condition:
+              and:
+                - binary_sensor.is_off: pedestrian_gate_open
+                - binary_sensor.is_off: gate_moving
+                - switch.is_off: child_lock
+            then:
+              - script.execute: open_pedestrian_gate
+            else:
+              - script.execute: fx_reject
+    stop_action:
+        - if:
+            condition:
+              and:
+                - binary_sensor.is_off: vehicle_gate_open
+                - binary_sensor.is_on: gate_moving
+            then:
+              - button.press: step_by_step
+            else:
+              - script.execute: fx_reject
+    close_action:
+        - if:
+            condition:
+              and:
+                - binary_sensor.is_off: vehicle_gate_open
+                - binary_sensor.is_on: pedestrian_gate_open
+                - binary_sensor.is_off: gate_moving
+            then:
+              - button.press: pedestrian
+            else:
+              - script.execute: fx_reject
+
+  - platform: template
+    name: "Gate"
+    device_class: "gate"
+    lambda: |-
+      if (id(vehicle_gate_open).state) {
+        return COVER_OPEN;
+      } else {
+        return COVER_CLOSED;
+      }
+    open_action:
+        - if:
+            condition:
+              and:
+                - binary_sensor.is_off: vehicle_gate_open
+                - binary_sensor.is_off: gate_moving
+                - switch.is_off: child_lock
+            then:
+              - script.execute: open_vehicle_gate
+            else:
+              - script.execute: fx_reject
+    stop_action:
+        - if:
+            condition:
+              and:
+                - binary_sensor.is_off: pedestrian_gate_open
+                - binary_sensor.is_on: gate_moving
+            then:
+              - button.press: step_by_step
+            else:
+              - script.execute: fx_reject
+    close_action:
+        - if:
+            condition:
+              and:
+                - binary_sensor.is_off: pedestrian_gate_open
+                - binary_sensor.is_on: vehicle_gate_open
+                - binary_sensor.is_off: gate_moving
+            then:
+              - button.press: step_by_step
+            else:
+              - script.execute: fx_reject
+
+output:
+  - platform: gpio
+    pin: ${relay1_pin}
+    id: relay1
+
+  - platform: gpio
+    pin: ${relay2_pin}
+    id: relay2
+
+  - platform: gpio
+    pin: ${relay3_pin}
+    id: relay3
+
+  - platform: gpio
+    pin: ${relay4_pin}
+    id: relay4
+
+  - platform: ledc
+    pin: ${buzzer_pin}
+    id: buzzer
+    frequency: ${output_freq}
+
+uart:
+  rx_pin: ${rx_pin}
+  baud_rate: 9600
+
+gps:
+
+rtttl:
+  output: buzzer
+
+button:
+  - platform: restart
+    name: "Restart node"
+
+  - platform: output
+    id: step_by_step
+    output: relay1
+    duration: 100ms
+
+  - platform: output
+    id: pedestrian
+    output: relay2
+    duration: 100ms
+
+  - platform: template
+    name: "Short beep"
+    on_press:
+      then:
+        - script.execute:
+            id: play_beep
+            priority: True
+            duration_ms: ${short_beep_length}
+            volume: ${max_volume}
+
+  - platform: template
+    name: "Long beep"
+    on_press:
+      then:
+        - script.execute:
+            id: play_beep
+            priority: True
+            duration_ms: ${long_beep_length}
+            volume: ${max_volume}
+
+  - platform: template
+    name: "Calibrate transit time"
+    entity_category: "config"
+    icon: "mdi:clock-end"
+    on_press:
+      then:
+        - script.execute: calibrate_transit_time_script
+
+switch:
+  - platform: template
+    id: mute_mode
+    name: "Mute mode"
+    icon: "mdi:volume-off"
+    entity_category: "config"
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: True
+
+  - platform: template
+    id: child_lock
+    name: "Child lock"
+    icon: "mdi:lock"
+    entity_category: "config"
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: True
+
+  - platform: template
+    id: siren
+    name: "Siren"
+    restore_mode: ALWAYS_OFF
+    optimistic: True
+    turn_on_action:
+      then:
+        - script.execute:
+            id: play_siren
+            priority: True
+            volume: ${max_volume}
+    turn_off_action:
+      then:
+        - script.stop: play_siren
+
+light:
+  - platform: binary
+    id: gate_lamp
+    name: "Gate lamp"
+    output: relay4
+    restore_mode: ALWAYS_OFF
+    effects:
+      - strobe:
+          name: "SOS"
+          colors:
+            - state: true
+              duration: 500ms
+            - state: false
+              duration: 500ms
+            - state: true
+              duration: 500ms
+            - state: false
+              duration: 500ms
+            - state: true
+              duration: 500ms
+            - state: false
+              duration: 1.5s
+            - state: true
+              duration: 1.5s
+            - state: false
+              duration: 500ms
+            - state: true
+              duration: 1.5s
+            - state: false
+              duration: 500ms
+            - state: true
+              duration: 1.5s
+            - state: false
+              duration: 1.5s
+            - state: true
+              duration: 500ms
+            - state: false
+              duration: 500ms
+            - state: true
+              duration: 500ms
+            - state: false
+              duration: 500ms
+            - state: true
+              duration: 500ms
+            - state: false
+              duration: 3.5s
+
+  - platform: status_led
+    id: gate_moving_light
+    restore_mode: ALWAYS_OFF
+    pin: ${status_led_pin}
+    effects:
+      - strobe:
+
+  - platform: esp32_rmt_led_strip
+    id: light_strip
+    rgb_order: GRB
+    chipset: ws2812
+    pin: ${led_strip_pin}
+    num_leds: 8
+    effects:
+      - pulse:
+          name: "Fast Pulse"
+          transition_length: 100ms
+          update_interval: 100ms
+      - pulse:
+          name: "Slow Pulse"
+          update_interval: 2s
+      - addressable_lambda:
+          name: "32s Timer"
+          update_interval: 4s
+          lambda: |-
+            static uint16_t progress = 1;
+            if (initial_run || (progress > it.size())) {
+              progress = 1;
+              it.all() = current_color;
+              return;
+            }
+            it.range(0, progress) = current_color.darken(200);
+            it.range(progress, it.size()) = current_color;
+            progress++;
+      - addressable_lambda:
+          name: "Scroll Down"
+          update_interval: 70ms
+          lambda: |-
+            static uint16_t progress = 0;
+            if (initial_run)
+              progress = 0;
+            it.all() = Color::BLACK;
+            it[progress] = current_color;
+            if (progress == it.size() - 1) {
+              progress = 0;
+            } else {
+              progress++;
+            }
+      - addressable_lambda:
+          name: "Scroll Up"
+          update_interval: 70ms
+          lambda: |-
+            static uint16_t progress = it.size() - 1;
+            if (initial_run)
+              int progress = it.size() - 1;
+            it.all() = Color::BLACK;
+            it[progress] = current_color;
+            if (progress == 0) {
+              progress = it.size() - 1;
+            } else {
+              progress--;
+            }
