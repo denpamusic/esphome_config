@@ -112,6 +112,7 @@ ota:
 wifi:
   ssid: !secret wifi_iot_ssid
   password: !secret wifi_iot_password
+  min_auth_mode: WPA2
 
   # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
