@@ -375,6 +375,18 @@ script:
                   - delay: 250ms
             - delay: 750ms
 
+  - id: fx_scroll_light
+    parameters:
+      effect: string
+    then:
+      - light.turn_on:
+          id: light_strip
+          brightness: 100%
+          red: !lambda "if(id(remote_control).state) return 1.0; else return 0.9;"
+          green: !lambda "if(id(remote_control).state) return 0.5; else return 0.17;"
+          blue: !lambda "if(id(remote_control).state) return 0.0; else return 0.31;"
+          effect: !lambda "return effect;"
+
   - id: fx_move_start
     then:
       - script.stop: fx_movement
@@ -387,20 +399,12 @@ script:
           condition:
             - lambda: return (id(pedestrian_gate_open_bool) || id(vehicle_gate_open_bool));
           then:
-            - light.turn_on:
-                id: light_strip
-                brightness: 100%
-                red: 100%
-                green: 50%
-                blue: 0%
+            - script.execute:
+                id: fx_scroll_light
                 effect: "Scroll Up"
           else:
-            - light.turn_on:
-                id: light_strip
-                brightness: 100%
-                red: 100%
-                green: 50%
-                blue: 0%
+            - script.execute:
+                id: fx_scroll_light
                 effect: "Scroll Down"
 
   - id: fx_move_done
