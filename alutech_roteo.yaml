@@ -602,7 +602,7 @@ binary_sensor:
         pullup: true
     name: "Gate moving"
     id: gate_moving
-    icon: "mdi:gate-alert"
+    icon: "mdi:cog-clockwise"
     device_class: "moving"
     on_press:
       then:
