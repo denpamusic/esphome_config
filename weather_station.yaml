@@ -6,10 +6,10 @@ substitutions:
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "weather-station"
-  version: "2.0.0"
+  version: "2.0.1"
 
   # Config
-  default_update_interval: 60s
+  default_update_interval: 1min
 
   # Deep sleep
   awake_time: 30s
@@ -17,8 +17,8 @@ substitutions:
 
   # Touch
   setup_mode: False
+  touch_wakeup: False
   touch_threshold: "300"
-  touch_wakeup: True
   touch_awake_time: 30s
   iir_filter: 10ms
 
@@ -46,9 +46,9 @@ esphome:
     name: ${manufacturer}.${project_name}
     version: ${version}
   on_boot:
-    priority: -10
-    then:
-      - lambda: "id(main_display).no_backlight();"
+    - priority: -100
+      then:
+        - script.execute: update_components
   on_shutdown:
     then:
       - lambda: "id(main_display).no_backlight();"
@@ -56,7 +56,6 @@ esphome:
 external_components:
   - source: github://krbaker/esphome-radsens@v1.0.1
     components: [ radsens ]
-    refresh: 600s
 
 esp32:
   board: ${platform}
@@ -69,13 +68,39 @@ logger:
 
 # Enable Home Assistant API
 api:
-  services:
-  - service: allow_deep_sleep
+  actions:
+  - action: sleep
+    variables:
+      minutes: int
     then:
-      - deep_sleep.allow: deep_sleep_1
-  - service: prevent_deep_sleep
+      - deep_sleep.enter:
+          id: deep_sleep_1
+          sleep_duration: !lambda "return minutes * 60 * 1000;"
+
+script:
+  - id: update_components
     then:
       - deep_sleep.prevent: deep_sleep_1
+      - while:
+          condition:
+            lambda: "return true;"
+          then:
+            - component.update: sht3xd_component
+            - delay: 1s
+            - component.update: bmp280_component
+            - delay: 1s
+            - component.update: radsens_component
+            - delay: 1s
+            - component.update: main_display
+            - delay: 2s
+            - component.update: wlan_rssi
+            - if:
+                condition:
+                  api.connected:
+                then:
+                  - homeassistant.event:
+                      event: esphome.environment_data_updated
+            - delay: ${default_update_interval}
 
 ota:
   - platform: esphome
@@ -109,7 +134,8 @@ display:
   - platform: lcd_pcf8574
     dimensions: 20x4
     address: ${i2c_display}
-    id: "main_display"
+    id: main_display
+    update_interval: never
     user_characters:
       - position: 0
         data:
@@ -280,15 +306,18 @@ binary_sensor:
               return (heat_index - 32.0) * (5.0 / 9.0);
 
 radsens:
+  id: radsens_component
   sensitivity: ${geiger_tube_sensitivity}
+  update_interval: never
 
 sensor:
   - platform: wifi_signal
     name: "WLAN RSSI"
     id: wlan_rssi
-    update_interval: ${default_update_interval}
+    update_interval: never
 
   - platform: sht3xd
+    id: sht3xd_component
     temperature:
       name: "Air temperature"
       id: air_temperature
@@ -299,16 +328,17 @@ sensor:
       accuracy_decimals: 1
     address: ${i2c_temperature}
     heater_enabled: false
-    update_interval: ${default_update_interval}
+    update_interval: never
 
   - platform: bmp280_i2c
+    id: bmp280_component
     temperature:
       name: "Chassis temperature"
     pressure:
       name: "Atmospheric pressure"
       id: atmospheric_pressure
     address: ${i2c_pressure}
-    update_interval: ${default_update_interval}
+    update_interval: never
 
   - platform: template
     id: absolute_humidity
@@ -317,6 +347,7 @@ sensor:
     icon: "mdi:water"
     unit_of_measurement: "g/m³"
     state_class: "measurement"
+    update_interval: never
 
   - platform: template
     id: equivalent_sea_level_pressure
@@ -324,6 +355,7 @@ sensor:
     icon: "mdi:gauge"
     unit_of_measurement: "hPa"
     state_class: "measurement"
+    update_interval: never
 
   - platform: template
     id: dew_point
@@ -331,6 +363,7 @@ sensor:
     unit_of_measurement: "°C"
     icon: "mdi:thermometer-alert"
     state_class: "measurement"
+    update_interval: never
 
   - platform: template
     id: heat_index
@@ -338,6 +371,7 @@ sensor:
     unit_of_measurement: "°C"
     icon: "mdi:sun-thermometer"
     state_class: "measurement"
+    update_interval: never
 
   - platform: radsens
     dynamic_intensity:
