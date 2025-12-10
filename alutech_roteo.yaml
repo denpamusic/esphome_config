@@ -30,6 +30,11 @@ substitutions:
   rtttl_success: "3"
   rtttl_movement: "4"
 
+  # Control sources
+  source_unknown: "0"
+  source_hass: "1"
+  source_remote: "2"
+
   # Startup
   startup_beep_volume: "1.0"
   startup_beep_length: "100"
@@ -59,7 +64,7 @@ esphome:
       - component.update: vehicle_gate_open_number
       - component.update: vehicle_gate_last_open_time
       - component.update: gate_move_time
-      - component.update: last_signal_source
+      - component.update: last_control_source
       - script.execute:
           id: turn_on_buzzer
           duration_ms: ${startup_beep_length}
@@ -160,25 +165,25 @@ globals:
     restore_value: False
     initial_value: "0"
 
-  - id: gate_move_internal_signal
+  - id: gate_move_local_control
     type: bool
     restore_value: False
     initial_value: "false"
 
-  - id: gate_move_signal_source
-    type: std::string
+  - id: gate_move_control_source
+    type: unsigned int
     restore_value: True
-    initial_value: '"Unknown"'
-
-  - id: remote_control_bool
-    type: bool
-    restore_value: False
-    initial_value: "false"
+    initial_value: "${source_unknown}"
 
   - id: gate_move_length
     type: time_t
     restore_value: True
     initial_value: "0"
+
+  - id: remote_control_bool
+    type: bool
+    restore_value: False
+    initial_value: "false"
 
   - id: gate_stuck_bool
     type: bool
@@ -224,6 +229,15 @@ globals:
       "Warning:d=8,o=5,b=100:a,e,a,e,a,e,a,e,a,e",
       "Success:d=8,o=6,b=180:g,p,g",
       "Movement:d=8,o=6,b=250:3g,4p,3g,4p,3g,3p,8g,10p,8g",
+    }'
+
+  - id: control_sources
+    type: std::vector<std::string>
+    restore_value: False
+    initial_value: '{
+      "Unknown",
+      "HomeAssistant",
+      "Remote",
     }'
 
 time:
@@ -592,23 +606,23 @@ binary_sensor:
       then:
         - if:
             condition:
-              lambda: "return id(gate_move_internal_signal);"
+              lambda: "return id(gate_move_local_control);"
             then:
               - globals.set:
-                  id: gate_move_internal_signal
+                  id: gate_move_local_control
                   value: "false"
               - globals.set:
-                  id: gate_move_signal_source
-                  value: '"HomeAssistant"'
-              - component.update: last_signal_source
+                  id: gate_move_control_source
+                  value: "${source_hass}"
+              - component.update: last_control_source
             else:
               - globals.set:
                   id: remote_control_bool
                   value: "true"
               - globals.set:
-                  id: gate_move_signal_source
-                  value: '"Remote"'
-              - component.update: last_signal_source
+                  id: gate_move_control_source
+                  value: "${source_remote}"
+              - component.update: last_control_source
         - light.turn_on:
             id: gate_moving_light
             effect: strobe
@@ -679,11 +693,11 @@ text_sensor:
       name: "MAC address"
 
   - platform: template
-    id: last_signal_source
-    name: "Last signal source"
+    id: last_control_source
+    name: "Last control source"
     update_interval: never
     entity_category: "diagnostic"
-    lambda: return {id(gate_move_signal_source)};
+    lambda: return {id(control_sources)[id(gate_move_control_source)]};
     icon: "mdi:devices"
 
 sensor:
@@ -922,7 +936,7 @@ button:
     on_press:
       then:
         - globals.set:
-            id: gate_move_internal_signal
+            id: gate_move_local_control
             value: "true"
 
   - platform: output
@@ -932,7 +946,7 @@ button:
     on_press:
       then:
         - globals.set:
-            id: gate_move_internal_signal
+            id: gate_move_local_control
             value: "true"
 
   - platform: template
