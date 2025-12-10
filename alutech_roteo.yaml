@@ -6,7 +6,7 @@ substitutions:
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "alutech-roteo"
-  version: "1.4.5"
+  version: "1.4.6"
 
   # Config
   transit_time_lower_bound: "2"
@@ -34,6 +34,7 @@ substitutions:
   source_unknown: "0"
   source_hass: "1"
   source_remote: "2"
+  source_remote_or_auto: "3"
 
   # Startup
   startup_beep_volume: "1.0"
@@ -238,6 +239,7 @@ globals:
       "Unknown",
       "HomeAssistant",
       "Remote",
+      "Remote/Automatic",
     }'
 
 time:
@@ -619,9 +621,17 @@ binary_sensor:
               - globals.set:
                   id: remote_control_bool
                   value: "true"
-              - globals.set:
-                  id: gate_move_control_source
-                  value: "${source_remote}"
+              - if:
+                  condition:
+                    - binary_sensor.is_on: vehicle_gate_open
+                  then:
+                    - globals.set:
+                        id: gate_move_control_source
+                        value: "${source_remote_or_auto}"
+                  else:
+                    - globals.set:
+                        id: gate_move_control_source
+                        value: "${source_remote}"
               - component.update: last_control_source
         - light.turn_on:
             id: gate_moving_light
