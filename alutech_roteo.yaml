@@ -255,7 +255,7 @@ script:
           then:
             - cover.template.publish:
                 id: pedestrian_gate
-                current_operation: "closing"
+                current_operation: !lambda "return COVER_OPERATION_CLOSING;"
             - button.press: pedestrian
             - delay: 2s
             - wait_until:
@@ -266,7 +266,7 @@ script:
             - button.press: step_by_step
       - cover.template.publish:
           id: gate
-          current_operation: "opening"
+          current_operation: !lambda "return COVER_OPERATION_OPENING;"
 
   - id: open_pedestrian_gate
     then:
@@ -276,7 +276,7 @@ script:
           then:
             - cover.template.publish:
                 id: gate
-                current_operation: "closing"
+                current_operation: !lambda "return COVER_OPERATION_CLOSING;"
             - button.press: step_by_step
             - delay: 2s
             - wait_until:
@@ -287,7 +287,7 @@ script:
             - button.press: pedestrian
       - cover.template.publish:
           id: pedestrian_gate
-          current_operation: "opening"
+          current_operation: !lambda "return COVER_OPERATION_OPENING;"
 
   - id: calibrate_transit_time_script
     then:
@@ -878,7 +878,7 @@ cover:
             then:
               - cover.template.publish:
                   id: pedestrian_gate
-                  current_operation: "closing"
+                  current_operation: !lambda "return COVER_OPERATION_CLOSING;"
               - button.press: pedestrian
             else:
               - script.execute: fx_reject
@@ -925,7 +925,7 @@ cover:
             then:
               - cover.template.publish:
                   id: gate
-                  current_operation: "closing"
+                  current_operation: !lambda "return COVER_OPERATION_CLOSING;"
               - button.press: step_by_step
             else:
               - script.execute: fx_reject
@@ -954,7 +954,7 @@ output:
 
 uart:
   rx_pin: ${rx_pin}
-  baud_rate: 9600
+  baud_rate: ${baudrate}
 
 gps:
 
@@ -968,7 +968,7 @@ button:
   - platform: output
     id: step_by_step
     output: relay1
-    duration: 100ms
+    duration: ${pulse_length}
     on_press:
       then:
         - globals.set:
@@ -978,7 +978,7 @@ button:
   - platform: output
     id: pedestrian
     output: relay2
-    duration: 100ms
+    duration: ${pulse_length}
     on_press:
       then:
         - globals.set:
