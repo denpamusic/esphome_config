@@ -19,9 +19,11 @@ substitutions:
   min_volume: "0.0"
   max_volume: "1.0"
 
-  # Beep
+  # Buzzer
   short_beep_length: "100"
   long_beep_length: "500"
+  startup_beep_volume: "1.0"
+  startup_beep_length: "100"
 
   # RTTTL
   rtttl_confirm: "0"
@@ -30,15 +32,17 @@ substitutions:
   rtttl_success: "3"
   rtttl_movement: "4"
 
+  # UART
+  baudrate: "9600"
+
   # Control sources
   source_unknown: "0"
   source_hass: "1"
   source_remote: "2"
   source_remote_or_auto: "3"
 
-  # Startup
-  startup_beep_volume: "1.0"
-  startup_beep_length: "100"
+  # Relay
+  pulse_length: 100ms
 
   # GPIOs
   status_led_pin: 23
