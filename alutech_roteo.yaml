@@ -6,7 +6,7 @@ substitutions:
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "alutech-roteo"
-  version: "1.4.7"
+  version: "1.4.8"
 
   # Config
   transit_time_lower_bound: "2"
@@ -871,7 +871,7 @@ cover:
               and:
                 - binary_sensor.is_off: pedestrian_gate_open
                 - binary_sensor.is_off: gate_moving
-                - switch.is_off: child_lock
+                - switch.is_off: gate_lock
             then:
               - script.execute: open_pedestrian_gate
             else:
@@ -918,7 +918,7 @@ cover:
               and:
                 - binary_sensor.is_off: vehicle_gate_open
                 - binary_sensor.is_off: gate_moving
-                - switch.is_off: child_lock
+                - switch.is_off: gate_lock
             then:
               - script.execute: open_vehicle_gate
             else:
@@ -1042,8 +1042,8 @@ switch:
     optimistic: True
 
   - platform: template
-    id: child_lock
-    name: "Child lock"
+    id: gate_lock
+    name: "Gate lock"
     icon: "mdi:lock"
     entity_category: "config"
     restore_mode: RESTORE_DEFAULT_OFF
