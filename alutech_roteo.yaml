@@ -64,12 +64,7 @@ esphome:
   friendly_name: ${friendly_name}
   on_boot:
     then:
-      - component.update: pedestrian_gate_open_number
-      - component.update: pedestrian_gate_last_open_time
-      - component.update: vehicle_gate_open_number
-      - component.update: vehicle_gate_last_open_time
-      - component.update: gate_move_time
-      - component.update: last_control_source
+      - script.execute: restore_sensors
       - script.execute:
           id: turn_on_buzzer
           duration_ms: ${startup_beep_length}
@@ -348,6 +343,15 @@ script:
                     value: "true"
                 - script.execute: fx_move_stuck
           - delay: 1s
+
+  - id: restore_sensors
+    then:
+      - component.update: pedestrian_gate_open_number
+      - component.update: pedestrian_gate_last_open_time
+      - component.update: vehicle_gate_open_number
+      - component.update: vehicle_gate_last_open_time
+      - component.update: gate_move_time
+      - component.update: last_control_source
 
   - id: turn_on_rtttl
     parameters:
