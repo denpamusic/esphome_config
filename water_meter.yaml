@@ -48,6 +48,13 @@ substitutions:
   i2c_scl_pin: GPIO36
   oled_reset_pin: GPIO43
 
+  # [Status]
+  status_pressure_sensor_1: "0"
+  status_pressure_sensor_2: "1"
+  status_temperature_sensor: "2"
+  status_inlet_pressure: "3"
+  status_water_filter: "4"
+
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
@@ -143,11 +150,6 @@ globals:
     restore_value: True
     initial_value: "0"
 
-  # 0. pressure sensor 1
-  # 1. pressure sensor 2
-  # 2. temperature sensor
-  # 3. inlet pressure
-  # 4. water filter
   - id: component_status
     type: std::vector<bool>
     restore_value: False
@@ -631,11 +633,11 @@ binary_sensor:
     lambda: "return id(water_pressure_sensor_1_voltage).state <= ${min_sensor_voltage};"
     on_press:
       then:
-        - lambda: "id(component_status)[0] = false;"
+        - lambda: "id(component_status)[${status_pressure_sensor_1}] = false;"
         - script.execute: display_timer
     on_release:
       then:
-        - lambda: "id(component_status)[0] = true;"
+        - lambda: "id(component_status)[${status_pressure_sensor_1}] = true;"
         - if:
             condition:
               - display.is_displaying_page: error_pressure_sensor_1
@@ -647,11 +649,11 @@ binary_sensor:
     lambda: "return id(water_pressure_sensor_2_voltage).state <= ${min_sensor_voltage};"
     on_press:
       then:
-        - lambda: "id(component_status)[1] = false;"
+        - lambda: "id(component_status)[${status_pressure_sensor_2}] = false;"
         - script.execute: display_timer
     on_release:
       then:
-        - lambda: "id(component_status)[1] = true;"
+        - lambda: "id(component_status)[${status_pressure_sensor_2}] = true;"
         - if:
             condition:
               - display.is_displaying_page: error_pressure_sensor_2
@@ -666,11 +668,11 @@ binary_sensor:
     icon: "mdi:gauge-empty"
     on_press:
       then:
-        - lambda: "id(component_status)[3] = false;"
+        - lambda: "id(component_status)[${status_inlet_pressure}] = false;"
         - script.execute: display_timer
     on_release:
       then:
-        - lambda: "id(component_status)[3] = true;"
+        - lambda: "id(component_status)[${status_inlet_pressure}] = true;"
         - if:
             condition:
               - display.is_displaying_page: warning_low_inlet_pressure
@@ -685,11 +687,11 @@ binary_sensor:
     icon: "mdi:sync-alert"
     on_press:
       then:
-        - lambda: "id(component_status)[4] = false;"
+        - lambda: "id(component_status)[${status_water_filter}] = false;"
         - script.execute: display_timer
     on_release:
       then:
-        - lambda: "id(component_status)[4] = true;"
+        - lambda: "id(component_status)[${status_water_filter}] = true;"
         - if:
             condition:
               - display.is_displaying_page: warning_replace_filter
@@ -1048,8 +1050,8 @@ sensor:
     on_value:
       then:
         - lambda: |-
-            if(x < 0 || isnan(x)) id(component_status)[2] = false;
-            id(component_status)[2] = true;
+            if(x < 0 || isnan(x)) id(component_status)[status_temperature_sensor] = false;
+            id(component_status)[status_temperature_sensor] = true;
 
 number:
   - platform: template
