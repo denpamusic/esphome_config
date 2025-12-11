@@ -1140,8 +1140,8 @@ light:
                 // previous pixels for a 2-LED fading trail
                 int prev1 = (progress == 0) ? (n - 1) : (progress - 1);
                 int prev2 = (prev1 == 0) ? (n - 1) : (prev1 - 1);
-                it[prev1] = current_color.darken(90);
-                it[prev2] = current_color.darken(150);
+                it[prev1] = current_color.darken(50);
+                it[prev2] = current_color.darken(75);
                 // advance and wrap
                 progress = (progress + 1) % n;
       - addressable_lambda:
@@ -1158,8 +1158,8 @@ light:
                 // next pixels for a 2-LED fading trail (ahead in the upward direction)
                 int next1 = (progress + 1) % n;
                 int next2 = (progress + 2) % n;
-                it[next1] = current_color.darken(90);
-                it[next2] = current_color.darken(150);
+                it[next1] = current_color.darken(50);
+                it[next2] = current_color.darken(75);
                 // advance (move upward) and wrap
                 if (progress == 0) {
                   progress = n - 1;
