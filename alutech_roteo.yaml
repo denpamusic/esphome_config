@@ -249,33 +249,45 @@ time:
 script:
   - id: open_vehicle_gate
     then:
-      if:
-        condition:
-          - binary_sensor.is_on: pedestrian_gate_open
-        then:
-          - button.press: pedestrian
-          - delay: 2s
-          - wait_until:
-              binary_sensor.is_off: gate_moving
-          - delay: 1s
-          - button.press: step_by_step
-        else:
-          - button.press: step_by_step
+      - if:
+          condition:
+            - binary_sensor.is_on: pedestrian_gate_open
+          then:
+            - cover.template.publish:
+                id: pedestrian_gate
+                current_operation: "closing"
+            - button.press: pedestrian
+            - delay: 2s
+            - wait_until:
+                binary_sensor.is_off: gate_moving
+            - delay: 1s
+            - button.press: step_by_step
+          else:
+            - button.press: step_by_step
+      - cover.template.publish:
+          id: gate
+          current_operation: "opening"
 
   - id: open_pedestrian_gate
     then:
-      if:
-        condition:
-          - binary_sensor.is_on: vehicle_gate_open
-        then:
-          - button.press: step_by_step
-          - delay: 2s
-          - wait_until:
-              binary_sensor.is_off: gate_moving
-          - delay: 1s
-          - button.press: pedestrian
-        else:
-          - button.press: pedestrian
+      - if:
+          condition:
+            - binary_sensor.is_on: vehicle_gate_open
+          then:
+            - cover.template.publish:
+                id: gate
+                current_operation: "closing"
+            - button.press: step_by_step
+            - delay: 2s
+            - wait_until:
+                binary_sensor.is_off: gate_moving
+            - delay: 1s
+            - button.press: pedestrian
+          else:
+            - button.press: pedestrian
+      - cover.template.publish:
+          id: pedestrian_gate
+          current_operation: "opening"
 
   - id: calibrate_transit_time_script
     then:
@@ -660,6 +672,9 @@ binary_sensor:
                     id(gate_move_length) > (id(pedestrian_gate_opening_time).state - ${transit_time_lower_bound}) &&
                     id(gate_move_length) < (id(pedestrian_gate_opening_time).state + ${transit_time_upper_bound});
             then:
+              - cover.template.publish:
+                  id: pedestrian_gate
+                  current_operation: "idle"
               - globals.set:
                   id: pedestrian_gate_open_bool
                   value: !lambda "return !id(pedestrian_gate_open_bool);"
@@ -671,6 +686,9 @@ binary_sensor:
                     id(gate_move_length) > (id(vehicle_gate_opening_time).state - ${transit_time_lower_bound}) &&
                     id(gate_move_length) < (id(vehicle_gate_opening_time).state + ${transit_time_upper_bound});
             then:
+              - cover.template.publish:
+                  id: gate
+                  current_operation: "idle"
               - globals.set:
                   id: vehicle_gate_open_bool
                   value: !lambda "return !id(vehicle_gate_open_bool);"
@@ -819,6 +837,7 @@ number:
 
 cover:
   - platform: template
+    id: pedestrian_gate
     name: "Pedestrian gate"
     device_class: "door"
     lambda: |-
@@ -857,11 +876,15 @@ cover:
                 - binary_sensor.is_on: pedestrian_gate_open
                 - binary_sensor.is_off: gate_moving
             then:
+              - cover.template.publish:
+                  id: pedestrian_gate
+                  current_operation: "closing"
               - button.press: pedestrian
             else:
               - script.execute: fx_reject
 
   - platform: template
+    id: gate
     name: "Gate"
     device_class: "gate"
     lambda: |-
@@ -900,6 +923,9 @@ cover:
                 - binary_sensor.is_on: vehicle_gate_open
                 - binary_sensor.is_off: gate_moving
             then:
+              - cover.template.publish:
+                  id: gate
+                  current_operation: "closing"
               - button.press: step_by_step
             else:
               - script.execute: fx_reject
