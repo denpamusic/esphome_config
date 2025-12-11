@@ -1,24 +1,24 @@
 substitutions:
   name: "strawberry"
-  friendly_name: "strawberry"
+  friendly_name: "Strawberry"
 
-  # Project
+  # [Project]
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "electicity-meter"
   version: "1.0.0"
 
-  # Config
+  # [TCP]
   port: "23"
   buffer_size: "2048"
 
-  # Serial
+  # [UART]
   baudrate: "9600"
   data_bits: "8"
   parity: NONE
   stop_bits: "1"
 
-  # GPIOs
+  # [GPIOs]
   tx_pin: TX
   rx_pin: RX
   led_pin: GPIO25
@@ -53,10 +53,8 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-
-  # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
-    ssid: "Strawberry Fallback Hotspot"
+    ssid: "${friendly_name} Fallback Hotspot"
     password: !secret strawberry_fallback_password
 
 captive_portal:

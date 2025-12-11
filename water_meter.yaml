@@ -1,31 +1,31 @@
 substitutions:
   name: "mango"
-  friendly_name: "mango"
+  friendly_name: "Mango"
 
-  # Project
+  # [Project]
   platform: "esp32-s3-devkitc-1"
   manufacturer: "lolin"
   project_name: "water-meter"
   version: "1.8.6"
 
-  # Config
-  pulse_min_length: 75ms
-  pulse_timeout: 30sec
-  pulse_debounce: 1s
-
-  # OLED
+  # [OLED]
   display_page: 5sec
   display_contrast: 80%
   display_timeout: 70sec
 
-  # Buzzer
-  buzzer_freq: "2700Hz"
+  # [Buzzer]
+  buzzer_freq: 2700Hz
 
-  # Temperature
+  # [Water Meter]
+  pulse_min_length: 75ms
+  pulse_timeout: 30sec
+  pulse_debounce: 1s
+
+  # [Temperature]
   water_temperature_update_interval: 30sec
   water_temperature_freezing_point: "2.0"
 
-  # Pressure
+  # [Pressure]
   static_pressure_measure_interval: 10sec
   static_pressure_measures: "3"
   dynamic_pressure_measures: "5"
@@ -34,19 +34,19 @@ substitutions:
   max_water_pressure: "5.0"
   min_sensor_voltage: "0.3"
 
-  # I2C
+  # [I2C]
   i2c_freq: 100kHz
 
-  # GPIOs
+  # [GPIOs]
   pressure_sensor_1_pin: GPIO2
+  buzzer_pin: GPIO10
+  water_meter_pin: GPIO11
   pressure_sensor_2_pin: GPIO12
   one_wire_pin: GPIO13
-  water_meter_pin: GPIO11
-  buzzer_pin: GPIO10
-  led_pin: GPIO47
   i2c_sda_pin: GPIO35
   i2c_scl_pin: GPIO36
   oled_reset_pin: GPIO43
+  led_pin: GPIO47
 
   # [Status]
   status_pressure_sensor_1: "0"
@@ -78,10 +78,8 @@ esp32:
   framework:
     type: esp-idf
 
-# Enable logging
 logger:
 
-# Enable Home Assistant API
 api:
   encryption:
     key: !secret mango_api_key
@@ -101,7 +99,6 @@ api:
             id: set_water_filter_capacity
             new_capacity: !lambda "return new_capacity;"
 
-# Allow Over-The-Air updates
 ota:
   - platform: esphome
     password: !secret mango_ota_password
@@ -109,14 +106,10 @@ ota:
 wifi:
   ssid: !secret wifi_iot_ssid
   password: !secret wifi_iot_password
-
-  # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
-    ssid: "Mango Fallback Hotspot"
+    ssid: "${friendly_name} Fallback Hotspot"
     password: !secret mango_fallback_password
 
-# In combination with the `ap` this allows the user
-# to provision wifi credentials to the device via WiFi AP.
 captive_portal:
 
 globals:
@@ -340,7 +333,7 @@ script:
           frequency: ${buzzer_freq}
       - output.set_level:
           id: buzzer
-          level: 0.5
+          level: 50%
       - delay: !lambda "return beep_length;"
       - output.turn_off: buzzer
 

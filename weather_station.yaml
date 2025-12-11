@@ -1,40 +1,43 @@
 substitutions:
   name: "honey"
-  friendly_name: "honey"
+  friendly_name: "Honey"
 
-  # Project
+  # [Project]
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "weather-station"
   version: "2.0.1"
 
-  # Config
+  # [Config]
   default_update_interval: 1min
 
-  # Deep sleep
+  # [Deep Sleep]
+  # Those settings are ignored, since update_components script will prevent sleep until confirmation from HA.
   awake_time: 30s
   deep_sleep_time: 5min
 
-  # Touch
+  # [Touch]
   setup_mode: False
   touch_wakeup: False
   touch_threshold: "300"
   touch_awake_time: 30s
   iir_filter: 10ms
 
-  # Weather
+  # [Weather]
   standard_altitude: "59.89"
+  universal_gas_constant: "8.31447215"
+  water_molar_mass: "18.01534"
 
-  # Radiation
+  # [Radiation]
   geiger_tube_sensitivity: 105
 
-  # I2C
+  # [I2C]
   i2c_freq: 100kHz
   i2c_display: 0x27
   i2c_temperature: 0x44
   i2c_pressure: 0x76
 
-  # GPIOs
+  # [GPIOs]
   pin_touch: GPIO32
 
 esphome:
@@ -52,10 +55,6 @@ esphome:
   on_shutdown:
     then:
       - lambda: "id(main_display).no_backlight();"
-
-external_components:
-  - source: github://krbaker/esphome-radsens@v1.0.1
-    components: [ radsens ]
 
 esp32:
   board: ${platform}
@@ -85,6 +84,7 @@ script:
           condition:
             lambda: "return true;"
           then:
+            - delay: 1s
             - component.update: sht3xd_component
             - delay: 1s
             - component.update: bmp280_component
@@ -92,14 +92,14 @@ script:
             - component.update: radsens_component
             - delay: 1s
             - component.update: main_display
-            - delay: 2s
-            - component.update: wlan_rssi
             - if:
                 condition:
                   api.connected:
                 then:
-                  - homeassistant.event:
-                      event: esphome.environment_data_updated
+                  - delay: 1s
+                  - component.update: wlan_rssi
+                  - delay: 1s
+                  - homeassistant.event: esphome.environment_data_updated
             - delay: ${default_update_interval}
 
 ota:
@@ -110,13 +110,15 @@ wifi:
   ssid: !secret wifi_iot_ssid
   password: !secret wifi_iot_password
   fast_connect: True
-
-  # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
-    ssid: "Honey Fallback Hotspot"
+    ssid: "${friendly_name} Fallback Hotspot"
     password: !secret honey_fallback_password
 
 captive_portal:
+
+external_components:
+  - source: github://krbaker/esphome-radsens@v1.0.1
+    components: [ radsens ]
 
 i2c:
   scan: False
@@ -269,11 +271,9 @@ binary_sensor:
         - sensor.template.publish:
             id: absolute_humidity
             state: !lambda |-
-              const float mw = 18.01534;    // molar mass of water g/mol
-              const float r = 8.31447215;   // Universal gas constant J/mol
               return (6.112 * powf(2.718281828, (17.67 * id(air_temperature).state) /
-                (id(air_temperature).state + 243.5)) * id(air_humidity).state * mw) /
-                ((273.15 + id(air_temperature).state) * r); // in grams/m^3
+                (id(air_temperature).state + 243.5)) * id(air_humidity).state * ${water_molar_mass}) /
+                ((273.15 + id(air_temperature).state) * ${universal_gas_constant});
 
         - sensor.template.publish:
             id: dew_point
