@@ -6,7 +6,7 @@ substitutions:
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "alutech-roteo"
-  version: "1.4.6"
+  version: "1.4.7"
 
   # Config
   transit_time_lower_bound: "2"
@@ -325,6 +325,29 @@ script:
               id: vehicle_gate_open_bool
               value: "true"
           - button.press: step_by_step
+
+  - id: gate_watchdog
+    mode: restart
+    then:
+      while:
+        condition:
+          - binary_sensor.is_on: gate_moving
+        then:
+          - if:
+              condition:
+                - lambda: |-
+                    return
+                      (id(gps_time).now().timestamp - id(gate_move_start_time)) >= (id(vehicle_gate_opening_time) + ${transit_time_upper_bound});
+              then:
+                - button.press: step_by_step
+                - globals.set:
+                    id: gate_stuck_bool
+                    value: "true"
+                - globals.set:
+                    id: vehicle_gate_open_bool
+                    value: "true"
+                - script.execute: fx_move_stuck
+          - delay: 1s
 
   - id: turn_on_rtttl
     parameters:
@@ -652,12 +675,17 @@ binary_sensor:
         - light.turn_on:
             id: gate_moving_light
             effect: strobe
-        - script.execute: fx_move_start
+        - globals.set:
+            id: gate_stuck_bool
+            value: "false"
         - globals.set:
             id: gate_move_start_time
             value: !lambda "return id(gps_time).now().timestamp;"
+        - script.execute: fx_move_start
+        - script.execute: gate_watchdog
     on_release:
       then:
+        - script.stop: gate_watchdog
         - light.turn_off: gate_moving_light
         - globals.set:
             id: remote_control_bool
@@ -696,26 +724,13 @@ binary_sensor:
               - globals.set:
                   id: vehicle_gate_open_bool
                   value: !lambda "return !id(vehicle_gate_open_bool);"
+
         - if:
             condition:
-              - lambda: |-
-                  return id(gate_move_length) >= (id(vehicle_gate_opening_time).state + ${transit_time_upper_bound});
+              not:
+                - lambda: return id(gate_stuck_bool)
             then:
-              - globals.set:
-                  id: gate_stuck_bool
-                  value: "true"
-              - globals.set:
-                  id: vehicle_gate_open_bool
-                  value: "true"
-              - script.execute: fx_move_stuck
-            else:
-              - globals.set:
-                  id: gate_stuck_bool
-                  value: "false"
               - script.execute: fx_move_done
-        - globals.set:
-            id: gate_move_start_time
-            value: "0"
 
 text_sensor:
   - platform: wifi_info
