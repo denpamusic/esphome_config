@@ -331,8 +331,8 @@ script:
           - if:
               condition:
                 - lambda: |-
-                    return
-                      (id(gps_time).now().timestamp - id(gate_move_start_time)) >= (id(vehicle_gate_opening_time) + ${transit_time_upper_bound});
+                    time_t seconds_since_move_start = id(gps_time).now().timestamp - id(gate_move_start_time);
+                    return (seconds_since_move_start >= (id(vehicle_gate_opening_time).state + ${transit_time_upper_bound}));
               then:
                 - button.press: step_by_step
                 - globals.set:
@@ -728,11 +728,10 @@ binary_sensor:
               - globals.set:
                   id: vehicle_gate_open_bool
                   value: !lambda "return !id(vehicle_gate_open_bool);"
-
         - if:
             condition:
               not:
-                - lambda: return id(gate_stuck_bool)
+                - lambda: "return id(gate_stuck_bool);"
             then:
               - script.execute: fx_move_done
 
