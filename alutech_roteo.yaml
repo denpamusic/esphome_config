@@ -158,20 +158,20 @@ globals:
     restore_value: False
     initial_value: "0"
 
-  - id: gate_move_local_control
-    type: bool
-    restore_value: False
-    initial_value: "false"
+  - id: gate_move_length
+    type: time_t
+    restore_value: True
+    initial_value: "0"
 
   - id: gate_move_control_source
     type: unsigned int
     restore_value: True
     initial_value: "${source_unknown}"
 
-  - id: gate_move_length
-    type: time_t
-    restore_value: True
-    initial_value: "0"
+  - id: local_control_bool
+    type: bool
+    restore_value: False
+    initial_value: "false"
 
   - id: remote_control_bool
     type: bool
@@ -644,10 +644,10 @@ binary_sensor:
       then:
         - if:
             condition:
-              lambda: "return id(gate_move_local_control);"
+              lambda: "return id(local_control_bool);"
             then:
               - globals.set:
-                  id: gate_move_local_control
+                  id: local_control_bool
                   value: "false"
               - globals.set:
                   id: gate_move_control_source
@@ -987,7 +987,7 @@ button:
     on_press:
       then:
         - globals.set:
-            id: gate_move_local_control
+            id: local_control_bool
             value: "true"
 
   - platform: output
@@ -997,7 +997,7 @@ button:
     on_press:
       then:
         - globals.set:
-            id: gate_move_local_control
+            id: local_control_bool
             value: "true"
 
   - platform: template
