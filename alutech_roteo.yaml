@@ -41,6 +41,10 @@ substitutions:
   # [Relay]
   pulse_length: 100ms
 
+  # [Lights and FX]
+  fx_scroll_trail_1_brightness: 0.6
+  fx_scroll_trail_2_brightness: 0.3
+
   # [GPIOs]
   buzzer_pin: 17
   vibration_sense_pin: 18
@@ -1152,11 +1156,19 @@ light:
                 size_t n = it.size();
                 // current pixel
                 it[progress] = current_color;
-                // previous pixels for a 2-LED fading trail
+                // previous pixels for a 2-LED fading trail (scale RGB to preserve hue)
                 int prev1 = (progress == 0) ? (n - 1) : (progress - 1);
                 int prev2 = (prev1 == 0) ? (n - 1) : (prev1 - 1);
-                it[prev1] = current_color.darken(50);
-                it[prev2] = current_color.darken(75);
+                it[prev1] = Color(
+                  static_cast<uint8_t>(current_color.r * ${fx_scroll_trail_1_brightness}),
+                  static_cast<uint8_t>(current_color.g * ${fx_scroll_trail_1_brightness}),
+                  static_cast<uint8_t>(current_color.b * ${fx_scroll_trail_1_brightness})
+                );
+                it[prev2] = Color(
+                  static_cast<uint8_t>(current_color.r * ${fx_scroll_trail_2_brightness}),
+                  static_cast<uint8_t>(current_color.g * ${fx_scroll_trail_2_brightness}),
+                  static_cast<uint8_t>(current_color.b * ${fx_scroll_trail_2_brightness})
+                );
                 // advance and wrap
                 progress = (progress + 1) % n;
       - addressable_lambda:
@@ -1170,11 +1182,19 @@ light:
                 size_t n = it.size();
                 // current pixel
                 it[progress] = current_color;
-                // next pixels for a 2-LED fading trail (ahead in the upward direction)
+                // next pixels for a 2-LED fading trail (ahead in the upward direction, scale RGB to preserve hue)
                 int next1 = (progress + 1) % n;
                 int next2 = (progress + 2) % n;
-                it[next1] = current_color.darken(50);
-                it[next2] = current_color.darken(75);
+                it[next1] = Color(
+                  static_cast<uint8_t>(current_color.r * ${fx_scroll_trail_1_brightness}),
+                  static_cast<uint8_t>(current_color.g * ${fx_scroll_trail_1_brightness}),
+                  static_cast<uint8_t>(current_color.b * ${fx_scroll_trail_1_brightness})
+                );
+                it[next2] = Color(
+                  static_cast<uint8_t>(current_color.r * ${fx_scroll_trail_2_brightness}),
+                  static_cast<uint8_t>(current_color.g * ${fx_scroll_trail_2_brightness}),
+                  static_cast<uint8_t>(current_color.b * ${fx_scroll_trail_2_brightness})
+                );
                 // advance (move upward) and wrap
                 if (progress == 0) {
                   progress = n - 1;
