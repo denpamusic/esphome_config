@@ -1043,8 +1043,8 @@ sensor:
     on_value:
       then:
         - lambda: |-
-            if(x < 0 || isnan(x)) id(component_status)[status_temperature_sensor] = false;
-            id(component_status)[status_temperature_sensor] = true;
+            if(x < 0 || isnan(x)) id(component_status)[${status_temperature_sensor}] = false;
+            id(component_status)[${status_temperature_sensor}] = true;
 
 number:
   - platform: template

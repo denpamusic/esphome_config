@@ -47,9 +47,9 @@ esphome:
           duration_ms: ${startup_beep_length}
           volume: ${startup_beep_volume}
           priority: False
-          red: 0%
-          green: 100%
-          blue: 0%
+          red: 0.0
+          green: 1.0
+          blue: 0.0
 
 esp8266:
   board: ${platform}
@@ -215,9 +215,9 @@ script:
                 duration_ms: !lambda "return duration_ms;"
                 priority: !lambda "return priority;"
                 volume: !lambda "return volume;"
-                red: 0%
-                green: 0%
-                blue: 100%
+                red: 0.0
+                green: 0.0
+                blue: 1.0
             - script.wait: turn_on_buzzer
 
   - id: play_tone
@@ -242,9 +242,9 @@ script:
                 tone: ${rtttl_confirm}
                 priority: !lambda "return priority;"
                 volume: !lambda "return volume;"
-                red: 0%
-                green: 0%
-                blue: 100%
+                red: 0.0
+                green: 0.0
+                blue: 1.0
             - script.stop: play_tone
 
       - if:
@@ -256,9 +256,9 @@ script:
                 tone: ${rtttl_reject}
                 priority: !lambda "return priority;"
                 volume: !lambda "return volume;"
-                red: 100%
-                green: 0%
-                blue: 0%
+                red: 1.0
+                green: 0.0
+                blue: 0.0
             - script.stop: play_tone
 
       - if:
@@ -270,9 +270,9 @@ script:
                 tone: ${rtttl_warning}
                 priority: !lambda "return priority;"
                 volume: !lambda "return volume;"
-                red: 100%
-                green: 80%
-                blue: 0%
+                red: 1.0
+                green: 0.8
+                blue: 0.0
             - script.stop: play_tone
 
       - if:
@@ -284,9 +284,9 @@ script:
                 tone: ${rtttl_success}
                 priority: !lambda "return priority;"
                 volume: !lambda "return volume;"
-                red: 0%
-                green: 100%
-                blue: 0%
+                red: 0.0
+                green: 1.0
+                blue: 0.0
             - script.stop: play_tone
 
       - logger.log:
@@ -306,9 +306,9 @@ script:
                 duration_ms: 500
                 priority: !lambda "return priority;"
                 volume: !lambda "return volume;"
-                red: 100%
-                green: 0%
-                blue: 0%
+                red: 1.0
+                green: 0.0
+                blue: 0.0
             - script.wait: turn_on_buzzer
             - delay: 250ms
       - delay: 750ms
