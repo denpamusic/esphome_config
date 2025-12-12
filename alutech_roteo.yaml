@@ -6,7 +6,7 @@ substitutions:
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "alutech-roteo"
-  version: "1.4.8"
+  version: "1.4.9"
 
   # [Config]
   transit_time_lower_bound_seconds: "2"

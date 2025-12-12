@@ -6,7 +6,7 @@ substitutions:
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "weather-station"
-  version: "2.0.1"
+  version: "2.0.2"
 
   # [Config]
   default_update_interval: 1min

@@ -6,7 +6,7 @@ substitutions:
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "electicity-meter"
-  version: "1.0.0"
+  version: "1.0.1"
 
   # [TCP]
   port: "23"
