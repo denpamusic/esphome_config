@@ -6,7 +6,7 @@ substitutions:
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "weather-station"
-  version: "2.0.2"
+  version: "2.0.3"
 
   # [Config]
   default_update_interval: 1min
@@ -48,10 +48,6 @@ esphome:
   project:
     name: ${manufacturer}.${project_name}
     version: ${version}
-  on_boot:
-    - priority: -100
-      then:
-        - script.execute: update_components
   on_shutdown:
     then:
       - lambda: "id(main_display).no_backlight();"
@@ -76,32 +72,6 @@ api:
           id: deep_sleep_1
           sleep_duration: !lambda "return minutes * 60 * 1000;"
 
-script:
-  - id: wait_for_connection
-    then:
-      - wait_until:
-          condition:
-            - api.connected:
-      - component.update: wlan_rssi
-      - sleep: 500ms
-      - homeassistant.event:
-          event: esphome.environment_data_updated
-
-  - id: update_components
-    then:
-      - deep_sleep.prevent: deep_sleep_1
-      - while:
-          condition:
-            lambda: "return true;"
-          then:
-            - script.stop: wait_for_connection
-            - component.update: sht3xd_component
-            - component.update: bmp280_component
-            - component.update: radsens_component
-            - component.update: main_display
-            - script.execute: wait_for_connection
-            - delay: ${default_update_interval}
-
 ota:
   - platform: esphome
     password: !secret honey_ota_password
@@ -125,12 +95,29 @@ i2c:
   frequency: ${i2c_freq}
 
 deep_sleep:
-  run_duration:
-    default: ${awake_time}
-    touch_wakeup_reason: ${touch_awake_time}
-  sleep_duration: ${deep_sleep_time}
   id: deep_sleep_1
   touch_wakeup: ${touch_wakeup}
+
+script:
+  - id: wait_for_connection
+    then:
+      - wait_until:
+          condition:
+            - api.connected:
+      - component.update: wlan_rssi
+      - sleep: 500ms
+      - homeassistant.event:
+          event: esphome.environment_data_updated
+
+interval:
+  - interval: ${default_update_interval}
+    then:
+      - script.stop: wait_for_connection
+      - component.update: sht3xd_component
+      - component.update: bmp280_component
+      - component.update: radsens_component
+      - component.update: main_display
+      - script.execute: wait_for_connection
 
 display:
   - platform: lcd_pcf8574
