@@ -77,6 +77,16 @@ api:
           sleep_duration: !lambda "return minutes * 60 * 1000;"
 
 script:
+  - id: wait_for_connection
+    then:
+      - wait_until:
+          condition:
+            - api.connected:
+      - component.update: wlan_rssi
+      - sleep: 500ms
+      - homeassistant.event:
+          event: esphome.environment_data_updated
+
   - id: update_components
     then:
       - deep_sleep.prevent: deep_sleep_1
@@ -84,23 +94,12 @@ script:
           condition:
             lambda: "return true;"
           then:
-            - delay: 1s
+            - script.stop: wait_for_connection
             - component.update: sht3xd_component
-            - delay: 1s
             - component.update: bmp280_component
-            - delay: 1s
             - component.update: radsens_component
-            - delay: 1s
             - component.update: main_display
-            - if:
-                condition:
-                  api.connected:
-                then:
-                  - delay: 1s
-                  - component.update: wlan_rssi
-                  - delay: 1s
-                  - homeassistant.event:
-                      event: esphome.environment_data_updated
+            - script.execute: wait_for_connection
             - delay: ${default_update_interval}
 
 ota:
@@ -110,7 +109,6 @@ ota:
 wifi:
   ssid: !secret wifi_iot_ssid
   password: !secret wifi_iot_password
-  fast_connect: True
   ap:
     ssid: "${friendly_name} Fallback Hotspot"
     password: !secret honey_fallback_password
@@ -120,6 +118,7 @@ captive_portal:
 external_components:
   - source: github://krbaker/esphome-radsens@v1.0.1
     components: [ radsens ]
+    refresh: never
 
 i2c:
   scan: False
