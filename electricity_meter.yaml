@@ -61,6 +61,7 @@ captive_portal:
 
 external_components:
   - source: github://oxan/esphome-stream-server
+    refresh: never
 
 uart:
   baud_rate: ${baudrate}
