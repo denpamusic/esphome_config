@@ -136,12 +136,19 @@ api:
 
     - service: reset_gate_state
       then:
-          - globals.set:
-              id: pedestrian_gate_open_bool
-              value: "false"
-          - globals.set:
-              id: vehicle_gate_open_bool
-              value: "false"
+        - globals.set:
+            id: pedestrian_gate_open_bool
+            value: "false"
+        - globals.set:
+            id: vehicle_gate_open_bool
+            value: "false"
+        - cover.template.publish:
+            id: pedestrian_gate
+            current_operation: !lambda "return COVER_OPERATION_IDLE;"
+        - cover.template.publish:
+            id: gate
+            current_operation: !lambda "return COVER_OPERATION_IDLE;"
+
 
 ota:
   - platform: esphome
@@ -707,7 +714,7 @@ binary_sensor:
             then:
               - cover.template.publish:
                   id: pedestrian_gate
-                  current_operation: "idle"
+                  current_operation: !lambda "return COVER_OPERATION_IDLE;"
               - globals.set:
                   id: pedestrian_gate_open_bool
                   value: !lambda "return !id(pedestrian_gate_open_bool);"
@@ -721,7 +728,7 @@ binary_sensor:
             then:
               - cover.template.publish:
                   id: gate
-                  current_operation: "idle"
+                  current_operation: !lambda "return COVER_OPERATION_IDLE;"
               - globals.set:
                   id: vehicle_gate_open_bool
                   value: !lambda "return !id(vehicle_gate_open_bool);"
