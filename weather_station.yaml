@@ -105,7 +105,7 @@ script:
           condition:
             - api.connected:
       - component.update: wlan_rssi
-      - sleep: 500ms
+      - delay: 500ms
       - homeassistant.event:
           event: esphome.environment_data_updated
 
@@ -114,8 +114,11 @@ interval:
     then:
       - script.stop: wait_for_connection
       - component.update: sht3xd_component
+      - delay: 100ms
       - component.update: bmp280_component
+      - delay: 100ms
       - component.update: radsens_component
+      - delay: 100ms
       - component.update: main_display
       - script.execute: wait_for_connection
 
