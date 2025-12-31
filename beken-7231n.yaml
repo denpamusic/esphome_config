@@ -1,0 +1,89 @@
+substitutions:
+  name: "plant-lamp"
+  friendly_name: "Bedside Plant Lamp Dimmer"
+
+  # [Project]
+  platform: "generic-bk7231n-qfn32-tuya"
+  manufacturer: "beken"
+  project_name: "plant-lamp-dimmer"
+  version: "1.0.0"
+
+  # [Power]
+  power_save_level: LIGHT
+
+  # [GPIOs]
+  light_pin: P8
+  remote_receiver_pin: P26
+  button_pin: P14
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  project:
+    name: "${manufacturer}.${project_name}"
+    version: ${version}
+
+bk72xx:
+  board: ${platform}
+
+# Enable logging
+logger:
+  level: DEBUG
+
+mdns:
+
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret lemon_api_key
+
+ota:
+  - platform: esphome
+    password: !secret lemon_ota_password
+
+wifi:
+  ssid: !secret wifi_iot2_ssid
+  password: !secret wifi_iot2_password
+  power_save_mode: ${power_save_level}
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "${name} Fallback Hotspot"
+    password: !secret lemon_fallback_password
+
+captive_portal:
+
+
+output:
+  - platform: libretiny_pwm
+    id: output_cold
+    pin: ${light_pin}
+    frequency: 40040Hz
+
+light:
+  - platform: monochromatic
+    id: light_monochromatic
+    name: Light
+    output: output_cold
+
+remote_receiver:
+  pin:
+    number: ${remote_receiver_pin}
+    inverted: true
+    mode: INPUT_PULLUP
+
+button:
+  - platform: restart
+    name: "Restart node"
+
+binary_sensor:
+  - platform: gpio
+    id: binary_switch_1
+    pin:
+      number: ${button_pin}
+      inverted: true
+      mode: INPUT_PULLUP
+    on_press: 
+      then:
+        - light.toggle: light_monochromatic
