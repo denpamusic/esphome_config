@@ -1,11 +1,11 @@
 substitutions:
-  name: "honey"
-  friendly_name: "Honey"
+  name: "weather-station"
+  friendly_name: "Multisensor Weather Station"
 
   # [Project]
   platform: "esp32dev"
   manufacturer: "espressif"
-  project_name: "weather-station"
+  project_name: "geiger-weather-station"
   version: "2.0.3"
 
   # [Config]
@@ -61,6 +61,9 @@ esp32:
 logger:
   baud_rate: 0
 
+mdns:
+
+
 # Enable Home Assistant API
 api:
   actions:
@@ -77,10 +80,10 @@ ota:
     password: !secret honey_ota_password
 
 wifi:
-  ssid: !secret wifi_iot_ssid
-  password: !secret wifi_iot_password
+  ssid: !secret wifi_iot2_ssid
+  password: !secret wifi_iot2_password
   ap:
-    ssid: "${friendly_name} Fallback Hotspot"
+    ssid: "${name} Fallback Hotspot"
     password: !secret honey_fallback_password
 
 captive_portal:

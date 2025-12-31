@@ -1,17 +1,17 @@
 substitutions:
-  name: "avocado"
-  friendly_name: "Avocado"
+  name: "gate-controller"
+  friendly_name: "Alutech Roteo Gate Controller"
 
   # [Project]
   platform: "esp32dev"
   manufacturer: "espressif"
-  project_name: "alutech-roteo"
+  project_name: "alutech-gate-controller"
   version: "1.4.9"
 
   # [Config]
   transit_time_lower_bound_seconds: "2"
   transit_time_upper_bound_seconds: "5"
-  motion_sensor: "binary_sensor.munin_home_motion_1"
+  motion_sensor: "binary_sensor.munin_home_field_detection_1"
 
   # [Buzzer]
   min_volume: "0.0"
@@ -86,6 +86,9 @@ esp32:
 logger:
   baud_rate: 0
 
+mdns:
+
+
 api:
   encryption:
     key: !secret avocado_api_key
@@ -155,10 +158,10 @@ ota:
     password: !secret avocado_ota_password
 
 wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+  ssid: !secret wifi_iot2_ssid
+  password: !secret wifi_iot2_password
   ap:
-    ssid: "${friendly_name} Fallback Hotspot"
+    ssid: "${name} Fallback Hotspot"
     password: !secret avocado_fallback_password
 
 captive_portal:

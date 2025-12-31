@@ -1,11 +1,11 @@
 substitutions:
-  name: "mango"
-  friendly_name: "Mango"
+  name: "water-monitor"
+  friendly_name: "Water Supply Monitor"
 
   # [Project]
   platform: "esp32-s3-devkitc-1"
   manufacturer: "lolin"
-  project_name: "water-meter"
+  project_name: "water-monitor"
   version: "1.8.7"
 
   # [OLED]
@@ -80,6 +80,10 @@ esp32:
 
 logger:
 
+
+mdns:
+
+
 api:
   encryption:
     key: !secret mango_api_key
@@ -107,7 +111,7 @@ wifi:
   ssid: !secret wifi_iot_ssid
   password: !secret wifi_iot_password
   ap:
-    ssid: "${friendly_name} Fallback Hotspot"
+    ssid: "${name} Fallback Hotspot"
     password: !secret mango_fallback_password
 
 captive_portal:
