@@ -6,11 +6,7 @@ substitutions:
   platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "energy-meter-proxy"
-  version: "1.0.2"
-
-  # [TCP]
-  port: "23"
-  buffer_size: "2048"
+  version: "2.0.2"
 
   # [UART]
   baudrate: "9600"
@@ -22,6 +18,9 @@ substitutions:
   tx_pin: TX
   rx_pin: RX
   led_pin: GPIO25
+
+  # [DLMS/COSEM]
+  dlms_update_interval: 15s
 
 esphome:
   name: ${name}
@@ -35,15 +34,16 @@ esphome:
 esp32:
   board: ${platform}
   framework:
-    type: esp-idf
+    type: arduino
+    advanced:
+      minimum_chip_revision: "3.1"
+      sram1_as_iram: true
 
 # Enable logging
 logger:
   baud_rate: 0
 
-
 mdns:
-
 
 # Enable Home Assistant API
 api:
@@ -64,8 +64,9 @@ wifi:
 captive_portal:
 
 external_components:
-  - source: github://oxan/esphome-stream-server
-    refresh: never
+  - source: github://latonita/esphome-dlms-cosem
+    components: [ dlms_cosem ]
+    refresh: 1s
 
 uart:
   baud_rate: ${baudrate}
@@ -74,29 +75,225 @@ uart:
   stop_bits: ${stop_bits}
   tx_pin: ${tx_pin}
   rx_pin: ${rx_pin}
-  rx_buffer_size: ${buffer_size}
 
-stream_server:
-  port: ${port}
-  buffer_size: ${buffer_size}
+dlms_cosem:
+  client_address: 32
+  server_address:
+    logical_device: 1
+    physical_device: 42
+    address_length: 2
+  auth: true
+  password: !secret strawberry_meter_password
+  update_interval: ${dlms_update_interval}
 
 button:
   - platform: restart
     name: "Restart node"
 
-binary_sensor:
-  - platform: status
-    name: "Node status"
+sensor:
+  - platform: wifi_signal
+    name: "WLAN RSSI"
 
-  - platform: stream_server
-    connected:
-      name: "UART server connected"
-      on_press:
-        then:
-          - light.turn_on: server_status
-      on_release:
-        then:
-          - light.turn_off: server_status
+  - platform: dlms_cosem
+    name: "Current L1"
+    obis_code: 1.0.31.7.0.255
+    unit_of_measurement: A
+    accuracy_decimals: 3
+    device_class: current
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Current L2"
+    obis_code: 1.0.51.7.0.255
+    unit_of_measurement: A
+    accuracy_decimals: 3
+    device_class: current
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Current L3"
+    obis_code: 1.0.71.7.0.255
+    unit_of_measurement: A
+    accuracy_decimals: 3
+    device_class: current
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Voltage L1"
+    obis_code: 1.0.32.7.0.255
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Voltage L2"
+    obis_code: 1.0.52.7.0.255
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Voltage L3"
+    obis_code: 1.0.72.7.0.255
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Active power total"
+    obis_code: 1.0.1.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: power
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Active power L1"
+    obis_code: 1.0.21.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: power
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Active power L2"
+    obis_code: 1.0.41.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: power
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Active power L3"
+    obis_code: 1.0.61.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: power
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Apparent power total"
+    obis_code: 1.0.9.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: apparent_power
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Apparent power L1"
+    obis_code: 1.0.29.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: apparent_power
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Apparent power L2"
+    obis_code: 1.0.49.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: apparent_power
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Apparent power L3"
+    obis_code: 1.0.69.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: apparent_power
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Power factor total"
+    obis_code: 1.0.13.7.0.255
+    accuracy_decimals: 3
+    device_class: power_factor
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Power factor L1"
+    obis_code: 1.0.33.7.0.255
+    accuracy_decimals: 3
+    device_class: power_factor
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Power factor L2"
+    obis_code: 1.0.53.7.0.255
+    accuracy_decimals: 3
+    device_class: power_factor
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Power factor L3"
+    obis_code: 1.0.73.7.0.255
+    accuracy_decimals: 3
+    device_class: power_factor
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Active energy total"
+    obis_code: 1.0.1.8.0.255
+    unit_of_measurement: kWh
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.001
+
+  - platform: dlms_cosem
+    name: "Active energy tariff 1"
+    obis_code: 1.0.1.8.1.255
+    unit_of_measurement: kWh
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.001
+
+  - platform: dlms_cosem
+    name: "Active energy tariff 2"
+    obis_code: 1.0.1.8.2.255
+    unit_of_measurement: kWh
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.001
+
+  - platform: dlms_cosem
+    name: "Frequency"
+    obis_code: 1.0.14.7.0.255
+    unit_of_measurement: Hz
+    accuracy_decimals: 2
+    device_class: frequency
+    state_class: measurement
+
+  - platform: dlms_cosem
+    name: "Internal temperature"
+    obis_code: 0.0.96.9.0.255
+    unit_of_measurement: C
+    accuracy_decimals: 0
+    device_class: temperature
+    state_class: measurement
+    entity_category: diagnostic
+
+  - platform: dlms_cosem
+    id: current_tariff
+    obis_code: 0.0.96.14.0.255
+    obis_class: 1
+    accuracy_decimals: 0
+    entity_category: diagnostic
+
+  - platform: dlms_cosem
+    id: "self_test"
+    obis_code: 0.0.97.97.0.255
+    obis_class: 1
+    accuracy_decimals: 0
+    entity_category: diagnostic
 
 text_sensor:
   - platform: wifi_info
@@ -105,11 +302,54 @@ text_sensor:
     mac_address:
       name: "MAC Address"
 
-sensor:
-  - platform: wifi_signal
-    name: "WLAN RSSI"
+  - platform: dlms_cosem
+    name: "Date"
+    obis_code: 0.0.1.0.0.255
+    entity_category: diagnostic
+    obis_class: 8
+
+  - platform: dlms_cosem
+    name: "Serial number"
+    obis_code: 0.0.96.1.0.255
+    entity_category: diagnostic
+
+binary_sensor:
+  - platform: status
+    name: "Node status"
+
+  - platform: template
+    name: "Night tariff"
+    icon: "mdi:weather-night"
+    lambda: |-
+      if (id(current_tariff).state == 2.0) {
+        return true;
+      }
+      if (id(current_tariff).state == 1.0) {
+        return false;
+      }
+      return {};
+
+  - platform: template
+    name: "Self-diagnostics"
+    device_class: problem
+    entity_category: diagnostic
+    lambda: |-
+      if (id(self_test).state > 0.0) {
+        return true;
+      } else {
+        return false;
+      }
+
+  - platform: dlms_cosem
+    connection:
+      name: "Optical port"
+      icon: "mdi:swap-horizontal-circle"
+      on_press:
+        light.turn_on: connection_status
+      on_release:
+        light.turn_off: connection_status
 
 light:
   - platform: status_led
-    id: server_status
+    id: connection_status
     pin: ${led_pin}
