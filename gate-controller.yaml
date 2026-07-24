@@ -82,6 +82,9 @@ esp32:
   board: ${platform}
   framework:
     type: esp-idf
+    advanced: 
+      minimum_chip_revision: "3.0"
+    
 
 logger:
   baud_rate: 0
@@ -160,6 +163,9 @@ ota:
 wifi:
   ssid: !secret wifi_iot2_ssid
   password: !secret wifi_iot2_password
+  fast_connect: True
+  power_save_mode: NONE
+  
   ap:
     ssid: "${name} Fallback Hotspot"
     password: !secret avocado_fallback_password
@@ -980,6 +986,7 @@ output:
     pin: ${buzzer_pin}
     id: buzzer
     frequency: ${buzzer_freq}
+    max_power: 100%
 
 uart:
   rx_pin: ${rx_pin}
