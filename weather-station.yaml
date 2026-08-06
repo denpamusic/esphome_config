@@ -3,10 +3,9 @@ substitutions:
   friendly_name: "Multisensor Weather Station"
 
   # [Project]
-  platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "geiger-weather-station"
-  version: "2.0.3"
+  version: "2.1.1"
 
   # [Config]
   default_update_interval: 1min
@@ -24,9 +23,12 @@ substitutions:
   iir_filter: 10ms
 
   # [Weather]
-  standard_altitude: "59.89"
+  station_altitude: "59.89"
   universal_gas_constant: "8.31447215"
   water_molar_mass: "18.01534"
+  low_pressure_threshold: "1004.0"
+  moderate_pressure_threshold: "1014.0"
+  high_pressure_threshold: "1022.0"
 
   # [Radiation]
   geiger_tube_sensitivity: 105
@@ -48,14 +50,43 @@ esphome:
   project:
     name: ${manufacturer}.${project_name}
     version: ${version}
+  on_boot:
+    priority: 600
+    then:
+      # Restore Pressure Trend Update Time
+      - if:
+          condition:
+            lambda: 'return id(pressure_history_updated_at) != 0;'
+          then:
+            - sensor.template.publish:
+                id: last_pressure_trend_update
+                state: !lambda 'return id(pressure_history_updated_at);'
+      # Restore Forecast String
+      - if:
+          condition:
+            lambda: 'return id(last_forecast_code) != 0;'
+          then:
+            - text_sensor.template.publish:
+                id: local_weather_forecast
+                state: !lambda 'return id(weather_forecast_map)[id(last_forecast_code)];'
+      # Restore Confidence Percentage
+      - if:
+          condition:
+            lambda: 'return id(last_forecast_confidence) > 0.0;'
+          then:
+            - sensor.template.publish:
+                id: local_forecast_confidence
+                state: !lambda 'return id(last_forecast_confidence);'
   on_shutdown:
     then:
       - lambda: "id(main_display).no_backlight();"
 
 esp32:
-  board: ${platform}
+  board: "esp32dev"
   framework:
     type: esp-idf
+    advanced:
+      minimum_chip_revision: "3.0"
 
 # Enable logging
 logger:
@@ -63,9 +94,13 @@ logger:
 
 mdns:
 
+time:
+  - platform: homeassistant
+    id: ha_time
 
 # Enable Home Assistant API
 api:
+  batch_delay: 1s
   actions:
   - action: sleep
     variables:
@@ -80,8 +115,9 @@ ota:
     password: !secret honey_ota_password
 
 wifi:
-  ssid: !secret wifi_iot2_ssid
-  password: !secret wifi_iot2_password
+  ssid: !secret wifi_iot_ssid
+  password: !secret wifi_iot_password
+  fast_connect: True
   ap:
     ssid: "${name} Fallback Hotspot"
     password: !secret honey_fallback_password
@@ -91,8 +127,120 @@ captive_portal:
 external_components:
   - source: github://krbaker/esphome-radsens@v1.0.1
     components: [ radsens ]
-    refresh: never
+    refresh: 1d
 
+mapping:
+  - id: weather_forecast_map
+    from: int
+    to: string
+    default_value: "---"
+    entries:
+      0: "Calculating..."
+      
+      # --- EXTREME LOW VISIBILITY (FOG) ---
+      1: "Dense Fog, otherwise Fair"
+      2: "Freezing Fog / Frost possible"
+      3: "Clearing, but Fog likely"
+      
+      # --- VERY LOW VISIBILITY (FOG & PRECIP) ---
+      4: "Fog or Light Snow"
+      5: "Fog or Light Rain & Snow"
+      6: "Fog or Light Rain"
+      
+      # --- LOW VISIBILITY (HEAVY / CONTINUOUS PRECIP) ---
+      # Base 7: Severe Storms
+      7: "Severe Storm Warning: Heavy Snow and Wind"
+      8: "Severe Storm Warning: Heavy Rain & Snow and Wind"
+      9: "Severe Storm Warning: Heavy Rain and Wind"
+      # Base 10: Stormy
+      10: "Stormy, Heavy Snow"
+      11: "Stormy, Heavy Rain & Snow"
+      12: "Stormy, Heavy Rain"
+      # Base 13: Continuous Precip
+      13: "Continuous Snow"
+      14: "Continuous Rain & Snow"
+      15: "Continuous Rain"
+      
+      # --- MODERATE VISIBILITY (LIGHT / EXPECTED PRECIP) ---
+      # Base 16: Worsening
+      16: "Worsening rapidly, Upcoming Snow"
+      17: "Worsening rapidly, Upcoming Rain & Snow"
+      18: "Worsening rapidly, Upcoming Rain"
+      # Base 19: Cloudy Likely
+      19: "Cloudy, Likely Snow"
+      20: "Cloudy, Likely Rain & Snow"
+      21: "Cloudy, Likely Rain"
+      # Base 22: Light Precip
+      22: "Light Snow"
+      23: "Light Rain & Snow"
+      24: "Light Rain"
+      
+      # --- GOOD VISIBILITY (CLOUDY TO CLEAR) ---
+      25: "Clearing, Showers ending"
+      26: "Increasing clouds, Unsettled"
+      27: "Partly Cloudy, Variable"
+      28: "Clouding over, Stable for now"
+      29: "Clearing up, Improving"
+      30: "Fair, but weakening High"
+      31: "Fair Weather"
+      32: "Mostly Clear"
+      33: "Clear and Dry"
+
+  - id: pressure_trend_map
+    from: int
+    to: string
+    default_value: "---"
+    entries:
+      -2: "Falling Fast"
+      -1: "Falling"
+      0: "Steady"
+      1: "Rising"
+      2: "Rising Fast"
+      
+globals:
+  - id: pressure_history
+    type: float[4]
+    restore_value: yes
+    initial_value: "{0.0, 0.0, 0.0, 0.0}"
+    
+  - id: pressure_history_updated_at
+    type: time_t
+    restore_value: yes
+    initial_value: "0"
+
+  - id: last_forecast_code
+    type: int
+    restore_value: yes
+    initial_value: "0"
+
+  - id: last_forecast_confidence
+    type: float
+    restore_value: yes
+    initial_value: "0.0"
+
+interval:
+  - interval: 30s
+    then:
+      - wait_until:
+          condition:
+            - lambda: |-
+                return (id(air_temperature).has_state() &&
+                  id(air_humidity).has_state() &&
+                  id(atmospheric_pressure).has_state() &&
+                  id(dynamic_intensity).has_state() &&
+                  id(wlan_rssi).has_state() &&
+                  id(equivalent_sea_level_pressure).has_state() &&
+                  id(dew_point_spread).has_state() &&
+                  id(pressure_trend_index).has_state() &&
+                  id(pressure_trend).has_state() &&
+                  id(pressure_rate).has_state() &&
+                  id(local_weather_index).has_state() &&
+                  id(local_weather_forecast).has_state());
+          timeout: 30s
+      - delay: 5s
+      - homeassistant.event:
+          event: esphome.environment_data_updated
+    
 i2c:
   scan: False
   frequency: ${i2c_freq}
@@ -101,36 +249,12 @@ deep_sleep:
   id: deep_sleep_1
   touch_wakeup: ${touch_wakeup}
 
-script:
-  - id: wait_for_connection
-    then:
-      - wait_until:
-          condition:
-            - api.connected:
-      - component.update: wlan_rssi
-      - delay: 500ms
-      - homeassistant.event:
-          event: esphome.environment_data_updated
-
-interval:
-  - interval: ${default_update_interval}
-    then:
-      - script.stop: wait_for_connection
-      - component.update: sht3xd_component
-      - delay: 100ms
-      - component.update: bmp280_component
-      - delay: 100ms
-      - component.update: radsens_component
-      - delay: 100ms
-      - component.update: main_display
-      - script.execute: wait_for_connection
-
 display:
   - platform: lcd_pcf8574
     dimensions: 20x4
     address: ${i2c_display}
     id: main_display
-    update_interval: never
+    update_interval: ${default_update_interval}
     user_characters:
       - position: 0
         data:
@@ -226,6 +350,10 @@ button:
   - platform: restart
     name: "Restart node"
 
+  - platform: factory_reset
+    name: "Factory Reset"
+    entity_category: "diagnostic"
+
 binary_sensor:
   - platform: status
     name: "Node status"
@@ -236,78 +364,85 @@ binary_sensor:
     threshold: "${touch_threshold}"
 
   - platform: template
+    name: "Low Visibility Warning"
+    id: low_visibility_warning
+    icon: "mdi:weather-fog"
+    device_class: problem
+    lambda: |-
+      int code;
+      if (id(local_weather_index).has_state()) {
+        code = (int)id(local_weather_index).state;
+      } else {
+        code = id(last_forecast_code);
+      }
+      if (code == 0) return {};
+      
+      return (code >= 1 && code <= 15);
+    
+  - platform: template
     id: temperature_and_pressure_available
     lambda: |-
-      if (isnan(id(air_temperature).state) || isnan(id(atmospheric_pressure).state)) {
-        return false;
-      } else {
+      if (id(air_temperature).has_state() && id(atmospheric_pressure).has_state()) {
         return true;
+      } else {
+        return false;
       }
     on_press:
       then:
-        - sensor.template.publish:
-            id: equivalent_sea_level_pressure
-            state: !lambda |-
-              return id(atmospheric_pressure).state / powf(1 - ((0.0065 * ${standard_altitude}) /
-                (id(air_temperature).state + (0.0065 * ${standard_altitude}) + 273.15)), 5.257); // in hPa
+        - component.update: equivalent_sea_level_pressure
 
   - platform: template
     id: temperature_and_humidity_available
     lambda: |-
-      if (isnan(id(air_temperature).state) || isnan(id(air_humidity).state)) {
-        return false;
-      } else {
+      if (id(air_temperature).has_state() && id(air_humidity).has_state()) {
         return true;
+      } else {
+        return false;
       }
     on_press:
       then:
-        - sensor.template.publish:
-            id: absolute_humidity
-            state: !lambda |-
-              return (6.112 * powf(2.718281828, (17.67 * id(air_temperature).state) /
-                (id(air_temperature).state + 243.5)) * id(air_humidity).state * ${water_molar_mass}) /
-                ((273.15 + id(air_temperature).state) * ${universal_gas_constant});
+        - component.update: heat_index
 
-        - sensor.template.publish:
-            id: dew_point
-            state: !lambda |-
-              return (243.5 * (log(id(air_humidity).state / 100) + ((17.67 * id(air_temperature).state) /
-                (243.5 + id(air_temperature).state))) / (17.67 - log(id(air_humidity).state / 100)-
-                ((17.67 * id(air_temperature).state) / (243.5 + id(air_temperature).state))));
+  - platform: template
+    id: time_and_slp_available
+    lambda: |-
+      if (id(ha_time).now().is_valid() && id(equivalent_sea_level_pressure).has_state()) {
+        return true;
+      } else {
+        return false;
+      }
+    on_press:
+      then:
+        - component.update: last_pressure_trend_update
 
-        - sensor.template.publish:
-            id: heat_index
-            state: !lambda |-
-              float heat_index;
-              float temperature = (id(air_temperature).state * (9.0 / 5.0) + 32.0);
-              float humidity = id(air_humidity).state;
-              if (temperature <= 40) {
-                heat_index = temperature;
-              } else {
-                heat_index = 0.5 * (temperature + 61.0 + ((temperature - 68.0) * 1.2) + (humidity * 0.094));
-              }
-              if (heat_index >= 79) {
-                heat_index = -42.379 +
-                  (2.04901523 + -0.22475541 * humidity + temperature * (-0.00683783 + 0.00122874 * humidity)) * temperature +
-                  (10.14333127 + humidity * (-0.05481717 + temperature * (0.00085282 + -0.00000199 * temperature))) * humidity;
-                  if ((humidity < 13) && (temperature >= 80.0) && (temperature) <= 112.0) {
-                    heat_index -= ((13.0 - humidity) * 0.25) * sqrt((17.0 - abs(temperature - 95.0)) * 0.05882);
-                  } else if ((humidity > 85.0) && (temperature >= 80.0) && (temperature <= 87.0)) {
-                    heat_index += (0.02 * (humidity - 85.0) * (87.0 - temperature));
-                  }
-              }
-              return (heat_index - 32.0) * (5.0 / 9.0);
+  - platform: template
+    id: forecast_data_available
+    lambda: |-
+      if (
+        id(equivalent_sea_level_pressure).has_state() &&
+        id(pressure_rate).has_state() &&
+        id(dew_point_spread).has_state() &&
+        id(pressure_trend_index).has_state() &&
+        id(precipitation_type).has_state()
+      ) {
+        return true;
+      } else {
+        return false;
+      }
+    on_press:
+      then:
+        - component.update: local_weather_index
 
 radsens:
   id: radsens_component
   sensitivity: ${geiger_tube_sensitivity}
-  update_interval: never
+  update_interval: ${default_update_interval}
 
 sensor:
   - platform: wifi_signal
     name: "WLAN RSSI"
     id: wlan_rssi
-    update_interval: never
+    update_interval: ${default_update_interval}
 
   - platform: sht3xd
     id: sht3xd_component
@@ -315,14 +450,27 @@ sensor:
       name: "Air temperature"
       id: air_temperature
       accuracy_decimals: 1
+      on_value:
+        then:
+          - component.update: precipitation_type
     humidity:
       name: "Air humidity"
       id: air_humidity
       accuracy_decimals: 1
     address: ${i2c_temperature}
     heater_enabled: false
-    update_interval: never
+    update_interval: ${default_update_interval}
 
+  - platform: template
+    id: precipitation_type
+    update_interval: never
+    lambda: |-
+      if (!id(air_temperature).has_state()) return {};
+      float t = id(air_temperature).state;
+      if (t <= 0.5) return 0; // Snow
+      if (t <= 2.5) return 1; // Rain & Snow
+      return 2;               // Rain
+    
   - platform: bmp280_i2c
     id: bmp280_component
     temperature:
@@ -331,40 +479,81 @@ sensor:
       name: "Atmospheric pressure"
       id: atmospheric_pressure
     address: ${i2c_pressure}
-    update_interval: never
+    update_interval: ${default_update_interval}
+
+  - platform: absolute_humidity
+    name: Absolute Humidity
+    temperature: air_temperature
+    humidity: air_humidity
+
+  - platform: dew_point
+    id: calculated_dew_point
+    name: "Dew point"
+    temperature: air_temperature
+    humidity: air_humidity
+    on_value:
+      then:
+        - component.update: dew_point_spread
 
   - platform: template
-    id: absolute_humidity
-    name: "Absolute humidity"
-    accuracy_decimals: 1
-    icon: "mdi:water"
-    unit_of_measurement: "g/m³"
-    state_class: "measurement"
-    update_interval: never
-
+    name: "Dew Point Spread"
+    id: dew_point_spread
+    icon: "mdi:weather-rainy"
+    unit_of_measurement: "°C"
+    state_class: measurement
+    entity_category: diagnostic
+    update_interval: ${default_update_interval}
+    lambda: |-
+      if (id(air_temperature).has_state() && id(calculated_dew_point).has_state()) {
+        return id(air_temperature).state - id(calculated_dew_point).state;
+      }
+      return {};
+          
   - platform: template
     id: equivalent_sea_level_pressure
     name: "Equivalent sea-level pressure"
     icon: "mdi:gauge"
     unit_of_measurement: "hPa"
     state_class: "measurement"
-    update_interval: never
-
-  - platform: template
-    id: dew_point
-    name: "Dew Point"
-    unit_of_measurement: "°C"
-    icon: "mdi:thermometer-alert"
-    state_class: "measurement"
-    update_interval: never
-
+    update_interval: ${default_update_interval}
+    lambda: |-
+      if (id(atmospheric_pressure).has_state() && id(air_temperature).has_state()) {     
+        return id(atmospheric_pressure).state / powf(1 - ((0.0065 * ${station_altitude}) /
+          (id(air_temperature).state + (0.0065 * ${station_altitude}) + 273.15)), 5.257);
+      }
+      return {};
+    
   - platform: template
     id: heat_index
     name: "Heat index"
     unit_of_measurement: "°C"
     icon: "mdi:sun-thermometer"
     state_class: "measurement"
-    update_interval: never
+    update_interval: ${default_update_interval}
+    lambda: |-
+        if (isnan(id(air_temperature).state) || isnan(id(air_humidity).state)) return {};
+
+        float heat_index = 0.0;
+        float t = (id(air_temperature).state * (9.0 / 5.0) + 32.0); // In Fahrenheit.
+        float h = id(air_humidity).state;
+        if (t <= 40) {
+          heat_index = t;
+        } else {
+          heat_index = 0.5 * (t + 61.0 + ((t - 68.0) * 1.2) + (h * 0.094));
+        }
+  
+        if (heat_index >= 79) {
+          heat_index = -42.379 +
+            (2.04901523 + -0.22475541 * h + t * (-0.00683783 + 0.00122874 * h)) * t +
+            (10.14333127 + h * (-0.05481717 + t * (0.00085282 + -0.00000199 * t))) * h;
+            if ((h < 13) && (t >= 80.0) && (t) <= 112.0) {
+              heat_index -= ((13.0 - h) * 0.25) * sqrt((17.0 - abs(t - 95.0)) * 0.05882);
+            } else if ((h > 85.0) && (t >= 80.0) && (t <= 87.0)) {
+              heat_index += (0.02 * (h - 85.0) * (87.0 - t));
+            }
+        }
+        
+        return (heat_index - 32.0) * (5.0 / 9.0);
 
   - platform: radsens
     dynamic_intensity:
@@ -378,6 +567,191 @@ sensor:
       unit_of_measurement: "μSv/h"
       filters:
         - multiply: 0.01
+          
+  - platform: template
+    id: last_pressure_trend_update
+    name: "Last atmospheric pressure trend update"
+    icon: "mdi:update"
+    lambda: |-
+     ESP_LOGD("forecast", "Pressure history over 3 hours. (current: %.1f hPa, 1h: %.1f hPa, 2h: %.1f hPa, 3h: %.1f hPa)",
+        id(pressure_history)[0],
+        id(pressure_history)[1],
+        id(pressure_history)[2],
+        id(pressure_history)[3]
+      );
+      if (isnan(id(equivalent_sea_level_pressure).state) && id(pressure_history_updated_at) > 0) return id(pressure_history_updated_at);
+
+      if (id(ha_time).now().timestamp >= id(pressure_history_updated_at) + 3600.0) {
+        for (int i = 3; i >= 1; i--) {
+          if (!isnan(id(pressure_history)[i-1])) id(pressure_history)[i] = id(pressure_history)[i-1];
+        }
+        id(pressure_history)[0] = id(equivalent_sea_level_pressure).state;
+        id(pressure_history_updated_at) = id(ha_time).now().timestamp;
+      }
+      
+      return id(pressure_history_updated_at);
+    device_class: timestamp
+    entity_category: diagnostic
+    update_interval: ${default_update_interval}
+    on_value:
+      then:
+        - component.update: pressure_trend_index
+
+  - platform: template
+    id: pressure_trend_index
+    update_interval: never
+    lambda: |-
+      if (id(pressure_history)[0] == 0.0 || id(pressure_history)[3] == 0.0) return {};
+      float delta_p = id(pressure_history)[0] - id(pressure_history)[3];
+      if (delta_p <= -1.5) return -2; // Falling Fast
+      if (delta_p < -0.5) return -1;  // Falling
+      if (delta_p >= 1.5) return 2;   // Rising Fast
+      if (delta_p > 0.5) return 1;    // Rising
+      return 0;                       // Steady
+    on_value:
+      then:
+        - text_sensor.template.publish:
+            id: pressure_trend
+            state: !lambda 'return id(pressure_trend_map)[(int)x];'
+        - component.update: pressure_rate
+          
+  - platform: template
+    name: "Atmospheric Pressure Rate"
+    id: pressure_rate
+    icon: "mdi:trending-up"
+    update_interval: never
+    unit_of_measurement: "hPa/h"
+    accuracy_decimals: 1
+    state_class: measurement
+    lambda: |-     
+      if (id(pressure_history)[0] == 0.0 || id(pressure_history)[3] == 0.0) return {};
+      return (id(pressure_history)[0] - id(pressure_history)[3]) / 3.0;
+      
+  - platform: template
+    id: local_weather_index
+    update_interval: ${default_update_interval}
+    lambda: |-
+      if (isnan(id(equivalent_sea_level_pressure).state) || 
+          isnan(id(dew_point_spread).state) || 
+          isnan(id(pressure_trend_index).state) ||
+          isnan(id(precipitation_type).state) ||
+          isnan(id(pressure_rate).state)) {
+        return {};
+      }
+
+      float slp = id(equivalent_sea_level_pressure).state;
+      float rate = id(pressure_rate).state;
+      float spread = id(dew_point_spread).state;
+      int trend = (int)id(pressure_trend_index).state;
+      int precip = (int)id(precipitation_type).state; 
+
+      // Squall / Severe Storm Override (Codes 7-9)
+      if (rate <= -1.5) return 7 + precip;
+
+      bool wet = (spread < 2.0);
+      bool saturated = (spread < 0.8);
+
+      // Low Pressure System (< 1004 hPa)
+      if (slp < ${low_pressure_threshold}) {
+        if (trend <= -1) return 10 + precip; // Stormy (10-12)
+        if (wet) return 13 + precip;         // Continuous (13-15)
+        if (trend >= 2) return 25;           // Clearing (25)
+        return 19 + precip;                  // Likely Precip (19-21)
+      }
+      
+      // Normal/Transitional Pressure (1004 - 1014 hPa)
+      else if (slp < ${moderate_pressure_threshold}) {
+        if (trend <= -2) return 16 + precip; // Worsening (16-18)
+        if (trend == -1) {
+          if (wet) return 22 + precip;       // Light Precip (22-24)
+          return 26;                         // Increasing clouds (26)
+        }
+        if (trend >= 1) {
+          if (saturated) return 3;           // Clearing, Fog likely (3)
+          return 29;                         // Improving (29)
+        }
+        if (saturated) return 4 + precip;    // Fog or Light Precip (4-6)
+        return 27;                           // Partly Cloudy (27)
+      }
+      
+      // High Pressure System (1014 - 1022 hPa)
+      else if (slp < ${high_pressure_threshold}) {
+        if (trend <= -1) return 28;            // Clouding over (28)
+        if (saturated && trend == 0) return 1; // Dense Fog (1)
+        if (trend >= 1) return 31;             // Fair Weather (31)
+        return 32;                             // Mostly Clear (32)
+      }
+      
+      // Extreme High Pressure (>= 1022 hPa)
+      else {
+        if (trend <= -1) return 30;          // Weakening High (30)
+        if (saturated) return 2;             // Freezing Fog (2)
+        return 33;                           // Clear and Dry (33)
+      }
+    on_value:
+      - globals.set:
+          id: last_forecast_code
+          value: !lambda 'return (int)x;'
+      - text_sensor.template.publish:
+          id: local_weather_forecast
+          state: !lambda 'return id(weather_forecast_map)[(int)x];'
+      - component.update: local_forecast_confidence
+
+  - platform: template
+    name: "Forecast Confidence"
+    id: local_forecast_confidence
+    icon: "mdi:percent"
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    state_class: measurement
+    update_interval: never
+    lambda: |-
+      if (isnan(id(local_weather_index).state)) return {};
+
+      float slp = id(equivalent_sea_level_pressure).state;
+      float trend = id(pressure_trend_index).state;
+      float rate = id(pressure_rate).state;
+      float spread = id(dew_point_spread).state;
+
+      // Base confidence for the algorithm
+      float confidence = 65.0; 
+
+      // 1. Trend Strength (Clear trends are predictable, steady is ambiguous)
+      if (trend >= 1.5 || trend <= -1.5) confidence += 15.0;
+      else if (trend > -0.5 && trend < 0.5) confidence -= 10.0;
+
+      // 2. Pressure Extremes (Highs and lows dictate clear patterns)
+      if (slp < (${low_pressure_threshold} - 4) || slp > ${high_pressure_threshold}) confidence += 15.0;
+      else if (slp >= ${low_pressure_threshold} && slp <= ${moderate_pressure_threshold}) confidence -= 10.0;
+
+      // 3. Rapid Changes (Squall lines / Fronts are highly deterministic)
+      if (rate >= 1.0 || rate <= -1.0) confidence += 15.0;
+
+      // 4. Moisture Signals (Saturated air or very dry air increases certainty)
+      if (spread <= 1.0 || spread >= 5.0) confidence += 10.0;
+
+      // Ensure the output stays within realistic logical bounds (10% to 99%)
+      if (confidence > 99.0) confidence = 99.0;
+      if (confidence < 10.0) confidence = 10.0;
+
+      return confidence;
+    on_value:
+      - globals.set:
+          id: last_forecast_confidence
+          value: !lambda 'return x;'
+
+text_sensor: 
+  - platform: template
+    name: "Local Weather Forecast"
+    id: local_weather_forecast
+    icon: "mdi:weather-partly-cloudy"
+    update_interval: never
+
+  - platform: template
+    name: "Atmospheric Pressure Trend"
+    id: pressure_trend
+    icon: "mdi:trending-up"
+    update_interval: never
 
 switch:
   - platform: radsens
