@@ -1,0 +1,803 @@
+substitutions:
+  name: breeder-climate
+  friendly_name: Breeder Climate Controller
+
+  # [Project]
+  manufacturer: "lolin"
+  project_name: "pid-climate-controller"
+  version: "1.0.0"
+
+  # [Display]
+  display1_mac: !secret breeder_climate__display1_mac
+
+  # [PID]
+  pwm_period: 5s
+  indication_period: 10s
+  measure_interval: 5s
+  initial_kp: 0.49460
+  initial_ki: 0.00487
+  initial_kd: 12.56301
+  initial_target: 30°C
+  min_temperature: 20°C
+  max_temperature: 35°C
+  deadband: 0.5°C
+
+  # [Tunes]
+  tune_boot: "system_boot:d=8,o=7,b=160:e,b"
+  tune_autotune_start: "autotune_start:d=8,o=7,b=200:c,e,g,c8"
+  tune_autotune_success: "autotune_success:d=8,o=7,b=200:e,g,b,c8"
+  tune_autotune_fail: "autotune_fail:d=4,o=7,b=120:c8,a,f"
+
+  # [GPIOs]
+  relay1_pin: GPIO18
+  temperature_probe1_pin: GPIO11
+  temperature_probe1_power_pin: GPIO10
+  green_led1_pin: GPIO44
+  red_led1_pin: GPIO43
+  relay2_pin: GPIO16
+  temperature_probe2_pin: GPIO2
+  temperature_probe2_power_pin: GPIO13
+  green_led2_pin: GPIO35
+  red_led2_pin: GPIO36
+  buzzer_pin: GPIO12
+  rgb_led_pin: GPIO47
+  
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.4.0
+  name_add_mac_suffix: false
+  project:
+    name: "${manufacturer}.${project_name}"
+    version: ${version}
+  on_boot:
+    - priority: 600
+      then:
+        - light.turn_on:
+            id: green_led1
+            effect: "Fast Blink"
+        - light.turn_on:
+            id: green_led2
+            effect: "Fast Blink"
+    - priority: -100
+      then:
+        - climate.pid.set_control_parameters:
+            id: climate_control1
+            kp: !lambda return id(climate_control1_kp).state;
+            ki: !lambda return id(climate_control1_ki).state;
+            kd: !lambda return id(climate_control1_kd).state;
+        - climate.pid.set_control_parameters:
+            id: climate_control2
+            kp: !lambda return id(climate_control2_kp).state;
+            ki: !lambda return id(climate_control2_ki).state;
+            kd: !lambda return id(climate_control2_kd).state;
+        - script.execute: mark_boot_done
+            
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption: 
+    key: !secret breeder_climate__api_key
+
+# Allow Over-The-Air updates
+ota:
+- platform: esphome
+  password: !secret breeder_climate__ota_password
+
+mdns: 
+
+external_components:
+  - source: github://denpavibes/esphome-pid-autotune-sensors
+    refresh: never
+    
+wifi:
+  ssid: !secret wifi_iot_ssid
+  password: !secret wifi_iot_password
+  ap:
+    ssid: "${name} Fallback Hotspot"
+    password: !secret breeder_climate__fallback_password
+  reboot_timeout: 1h
+
+captive_portal:
+
+globals:
+  id: boot_done
+  type: bool
+  restore_value: false
+  initial_value: "false"
+  
+script:
+  - id: mark_boot_done
+    mode: single
+    then:
+      - delay: 5s
+      - globals.set:
+          id: boot_done
+          value: "true"
+      - script.execute:
+          id: led_control
+          channel: 1
+      - script.execute:
+          id: led_control
+          channel: 2
+      - script.execute:
+          id: buzzer_control
+          action: "Boot"
+
+  - id: buzzer_control
+    mode: queued
+    parameters:
+      action: string
+    then:
+      - if:
+          condition:
+            - lambda: 'return action == "Boot";'
+          then:
+            - rtttl.play:
+                id: buzzer
+                rtttl: ${tune_boot}
+      - if:
+          condition:
+            - lambda: 'return action == "Running";'
+          then:
+            - rtttl.play:
+                id: buzzer
+                rtttl: ${tune_autotune_start}
+      - if:
+          condition:
+            - lambda: 'return action == "Finished";'
+          then:
+            - rtttl.play:
+                id: buzzer
+                rtttl: ${tune_autotune_success}
+      - if:
+          condition:
+            - lambda: 'return action == "Failed";'
+          then:
+            - rtttl.play:
+                id: buzzer
+                rtttl: ${tune_autotune_fail}
+
+  - id: led_control
+    mode: queued
+    parameters:
+      channel: int
+    then:
+      - lambda: |-
+          if(!id(boot_done)) return;
+
+          bool is_autotune;
+          bool is_climate_off;
+          bool is_sensor_connected;
+          light::LightState *led;
+
+          // Map the parameters based on the channel passed
+          if (channel == 1) {
+            is_autotune = id(autotune_status1).state == "Running";
+            is_climate_off = id(climate_control1).mode == CLIMATE_MODE_OFF;
+            is_sensor_connected = id(sensor1_connected).state;
+            led = id(green_led1);
+          } else if (channel == 2) {
+            is_autotune = id(autotune_status2).state == "Running";
+            is_climate_off = id(climate_control2).mode == CLIMATE_MODE_OFF;
+            is_sensor_connected = id(sensor2_connected).state;
+            led = id(green_led2);
+          } else {
+            return; // Invalid channel
+          }
+
+          if (!is_autotune && is_climate_off) {
+            led->turn_off().perform();
+            return;
+          }
+
+          auto call = led->turn_on();
+          auto current_effect = led->get_effect_name();
+          std::string new_effect;
+          
+          if (!is_sensor_connected) {
+            new_effect = "Fast Blink";
+          } else if (is_autotune) {
+            new_effect = "Slow Pulse";
+          } else {
+            new_effect = "None";
+          }
+
+          if (new_effect == "None" || current_effect != new_effect) {
+            call.set_effect(new_effect);
+            call.perform();
+          }
+          
+output:
+  - platform: slow_pwm
+    period: ${pwm_period}
+    pin: ${relay1_pin}
+    inverted: true
+    id: heat_output1
+    state_change_action:
+      then:
+        - output.set_level:
+            id: red_led1
+            level: !lambda "return state;"
+  
+  - platform: slow_pwm
+    period: ${pwm_period}
+    pin: ${relay2_pin}
+    inverted: true
+    id: heat_output2
+    state_change_action:
+      then:
+        - output.set_level:
+            id: red_led2
+            level: !lambda "return state;"
+
+  - platform: slow_pwm
+    period: ${indication_period}
+    pin: ${red_led1_pin}
+    inverted: true
+    id: red_led1
+
+  - platform: slow_pwm
+    period: ${indication_period}
+    pin: ${red_led2_pin}
+    inverted: true
+    id: red_led2
+  
+  - platform: ledc
+    pin: ${buzzer_pin}
+    id: buzzer_pwm
+
+  - platform: ledc
+    pin: ${green_led1_pin}
+    id: green_led1_output
+
+  - platform: ledc
+    pin: ${green_led2_pin}
+    id: green_led2_output
+
+rtttl:
+  output: buzzer_pwm
+  id: buzzer
+    
+light:
+  - platform: esp32_rmt_led_strip
+    id: ${rgb_led_pin}
+    channel_colors: GRB
+    pin: ${rgb_led_pin}
+    num_leds: 1
+    chipset: WS2812
+
+  - platform: monochromatic
+    id: green_led1
+    output: green_led1_output
+    default_transition_length: 0s
+    effects:
+      - strobe:
+          name: "Fast Blink"
+          colors:
+            - state: true
+              duration: 500ms
+            - state: false
+              duration: 500ms
+      - pulse:
+          name: "Slow Pulse"
+          transition_length:
+            on_length: 500ms
+            off_length: 1.5s
+          update_interval: 2s
+
+  - platform: monochromatic
+    id: green_led2
+    output: green_led2_output
+    default_transition_length: 0s
+    effects:
+      - strobe:
+          name: "Fast Blink"
+          colors:
+            - state: true
+              duration: 500ms
+            - state: false
+              duration: 500ms
+      - pulse:
+          name: "Slow Pulse"
+          transition_length:
+            on_length: 500ms
+            off_length: 1.5s
+          update_interval: 2s
+
+esp32_ble_tracker:
+
+ble_client:
+  - mac_address: ${display1_mac}
+    id: display1
+
+button:
+  - platform: restart
+    name: "Restart Node"
+
+  - platform: template
+    name: "Channel 1 Autotune"
+    on_press:
+      - climate.pid.autotune: climate_control1
+    entity_category: config
+
+  - platform: template
+    name: "Channel 2 Autotune"
+    on_press:
+      - climate.pid.autotune: climate_control2
+    entity_category: config
+    
+time:
+  - platform: homeassistant
+    id: ha_time
+
+display:
+  - platform: pvvx_mithermometer
+    ble_client_id: display1
+    update_interval: 1min
+    validity_period: 5min
+    time_id: ha_time
+    lambda: |-
+      double temp = id(climate_control1).current_temperature;
+      double target = id(climate_control1).target_temperature;
+      it.print_bignum(temp);
+      it.print_unit(pvvx_mithermometer::UNIT_DEG_C);
+      it.print_smallnum(target);
+
+binary_sensor:
+  - platform: status
+    name: "Node status"
+  
+  - platform: template
+    id: sensor1_connected
+    name: "Channel 1 Sensor State"
+    device_class: connectivity
+    lambda: "return !isnan(id(probe1_temperature).state);"
+
+  - platform: template
+    id: sensor2_connected
+    name: "Channel 2 Sensor State"
+    device_class: connectivity
+    lambda: "return !isnan(id(probe2_temperature).state);"
+
+sensor:
+  - platform: wifi_signal
+    name: "WLAN RSSI"
+    update_interval: 60s
+  
+  - platform: pid
+    name: "Channel 1 Heat Output"
+    type: HEAT
+    climate_id: climate_control1
+
+  - platform: pid_autotune
+    name: "Channel 1 Autotune Phase"
+    climate_id: climate_control1
+    update_interval: 5s
+
+  - platform: pid_autotune
+    name: "Channel 2 Autotune Phase"
+    climate_id: climate_control2
+    update_interval: 5s
+    
+  - platform: pid
+    id: pid1_kp
+    type: KP
+    climate_id: climate_control1
+    entity_category: diagnostic
+    accuracy_decimals: 5
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(climate_control1_kp).state != x;'
+            then:
+              - number.set:
+                  id: climate_control1_kp
+                  value: !lambda return x;
+                  
+  - platform: pid
+    id: pid1_ki
+    type: KI
+    climate_id: climate_control1
+    entity_category: diagnostic
+    accuracy_decimals: 5
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(climate_control1_ki).state != x;'
+            then:
+              - number.set:
+                  id: climate_control1_ki
+                  value: !lambda return x;
+
+  - platform: pid
+    id: pid1_kd
+    type: KD
+    climate_id: climate_control1
+    entity_category: diagnostic
+    accuracy_decimals: 5
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(climate_control1_kd).state != x;'
+            then:
+              - number.set:
+                  id: climate_control1_kd
+                  value: !lambda return x;
+
+  - platform: pid
+    name: "Channel 1 PID Result"
+    type: RESULT
+    climate_id: climate_control1
+    entity_category: diagnostic
+    
+  - platform: pid
+    name: "Channel 2 Heat Output"
+    type: HEAT
+    climate_id: climate_control2
+
+  - platform: pid
+    id: pid2_kp
+    type: KP
+    climate_id: climate_control2
+    entity_category: diagnostic
+    accuracy_decimals: 5
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(climate_control2_kp).state != x;'
+            then:
+              - number.set:
+                  id: climate_control2_kp
+                  value: !lambda return x;
+
+  - platform: pid
+    id: pid2_ki
+    type: KI
+    climate_id: climate_control2
+    entity_category: diagnostic
+    accuracy_decimals: 5
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(climate_control2_ki).state != x;'
+            then:
+              - number.set:
+                  id: climate_control1_ki
+                  value: !lambda return x;
+
+  - platform: pid
+    id: pid2_kd
+    type: KD
+    climate_id: climate_control2
+    entity_category: diagnostic
+    accuracy_decimals: 5
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(climate_control2_kd).state != x;'
+            then:
+              - number.set:
+                  id: climate_control2_kd
+                  value: !lambda return x;
+
+  - platform: pid
+    name: "Channel 2 PID Result"
+    type: RESULT
+    climate_id: climate_control2
+    entity_category: diagnostic
+    
+  - platform: dht
+    pin:
+      number: ${temperature_probe1_pin}
+      mode:
+        input: true
+        pullup: false
+    model: AM2302
+    temperature:
+      name: "Channel 1 Temperature"
+      id: probe1_temperature
+      on_raw_value:
+        then:
+          - if:
+              condition:
+                - lambda: "return isnan(x);"
+              then:
+                - switch.turn_off: sensor1_power
+                - delay: 3s
+                - switch.turn_on: sensor1_power
+          - script.execute:
+              id: led_control
+              channel: 1
+      filters:
+        - or:
+            - throttle: 20s
+            - delta: 0.2
+    humidity:
+      name: "Channel 1 Humidity"
+      id: probe1_humidity
+      accuracy_decimals: 1
+      filters:
+        - or:
+            - throttle: 20s
+            - delta: 0.2
+    update_interval: ${measure_interval}
+      
+  - platform: bthome_mithermometer
+    mac_address: ${display1_mac}
+    temperature:
+      name: "Display 1 Temperature"
+    humidity:
+      name: "Display 1 Humidity"
+    battery_level:
+      name: "Display 1 Battery Level"
+    battery_voltage:
+      name: "Display 1 Battery Voltage"
+    signal_strength:
+      name: "Display 1 Signal"
+      
+  - platform: dht
+    pin:
+      number: ${temperature_probe2_pin}
+      mode:
+        input: true
+        pullup: false
+    model: AM2302
+    temperature:
+      name: "Channel 2 Temperature"
+      id: probe2_temperature
+      on_raw_value:
+        then:
+          - if:
+              condition:
+                - lambda: "return isnan(x);"
+              then:
+                - switch.turn_off: sensor2_power
+                - delay: 3s
+                - switch.turn_on: sensor2_power
+          - script.execute:
+              id: led_control
+              channel: 2
+      filters:
+        - or:
+          - throttle: 20s
+          - delta: 0.2
+    humidity:
+      name: "Channel 2 Humidity"
+      id: probe2_humidity
+      accuracy_decimals: 1
+      filters:
+        - or:
+          - throttle: 20s
+          - delta: 0.2
+    update_interval: ${measure_interval}
+    
+switch:
+  - platform: gpio
+    pin: ${temperature_probe1_power_pin}
+    id: sensor1_power
+    restore_mode: ALWAYS_ON
+  
+  - platform: gpio
+    pin: ${temperature_probe2_power_pin}
+    id: sensor2_power
+    restore_mode: ALWAYS_ON
+
+number:
+  - platform: template
+    id: climate_control1_kp
+    name: "Channel 1 PID Kp"
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${initial_kp}
+    min_value: 0.0
+    max_value: 100.0
+    step: 0.00001
+    entity_category: config
+    on_value:
+      then:
+        - climate.pid.set_control_parameters:
+            id: climate_control1
+            kp: !lambda return x;
+            ki: !lambda return id(climate_control1_ki).state;
+            kd: !lambda return id(climate_control1_kd).state;
+
+  - platform: template
+    id: climate_control1_ki
+    name: "Channel 1 PID Ki"
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${initial_ki}
+    min_value: 0.0
+    max_value: 10.0
+    step: 0.00001
+    entity_category: config
+    on_value:
+      then:
+        - climate.pid.set_control_parameters:
+            id: climate_control1
+            kp: !lambda return id(climate_control1_kp).state;
+            ki: !lambda return x;
+            kd: !lambda return id(climate_control1_kd).state;
+
+  - platform: template
+    id: climate_control1_kd
+    name: "Channel 1 PID Kd"
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${initial_kd}
+    min_value: 0.0
+    max_value: 100.0
+    step: 0.00001
+    entity_category: config
+    on_value:
+      then:
+        - climate.pid.set_control_parameters:
+            id: climate_control1
+            kp: !lambda return id(climate_control1_kp).state;
+            ki: !lambda return id(climate_control1_ki).state;
+            kd: !lambda return x;
+
+  - platform: template
+    id: climate_control2_kp
+    name: "Channel 2 PID Kp"
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${initial_kp}
+    min_value: 0.0
+    max_value: 100.0
+    step: 0.00001
+    entity_category: config
+    on_value:
+      then:
+        - climate.pid.set_control_parameters:
+            id: climate_control2
+            kp: !lambda return x;
+            ki: !lambda return id(climate_control2_ki).state;
+            kd: !lambda return id(climate_control2_kd).state;
+
+  - platform: template
+    id: climate_control2_ki
+    name: "Channel 2 PID Ki"
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${initial_ki}
+    min_value: 0.0
+    max_value: 10.0
+    step: 0.00001
+    entity_category: config
+    on_value:
+      then:
+        - climate.pid.set_control_parameters:
+            id: climate_control2
+            kp: !lambda return id(climate_control2_kp).state;
+            ki: !lambda return x;
+            kd: !lambda return id(climate_control2_kd).state;
+
+  - platform: template
+    id: climate_control2_kd
+    name: "Channel 2 PID Kd"
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${initial_kd}
+    min_value: 0.0
+    max_value: 100.0
+    step: 0.00001
+    entity_category: config
+    on_value:
+      then:
+        - climate.pid.set_control_parameters:
+            id: climate_control2
+            kp: !lambda return id(climate_control2_kp).state;
+            ki: !lambda return id(climate_control2_ki).state;
+            kd: !lambda return x;
+            
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+    mac_address:
+      name: "MAC Address"
+  
+  - platform: template
+    name: "Display 1 MAC Address"
+    lambda: 'return {"${display1_mac}"};'
+    entity_category: diagnostic
+
+  - platform: pid_autotune
+    id: autotune_status1
+    name: "Channel 1 Autotune Status"
+    climate_id: climate_control1
+    update_interval: 5s
+    on_value:
+      then:
+        - script.execute:
+            id: led_control
+            channel: 1
+        - script.execute:
+            id: buzzer_control
+            action: !lambda "return x;"
+
+  - platform: pid_autotune
+    id: autotune_status2
+    name: "Channel 2 Autotune Status"
+    climate_id: climate_control2
+    update_interval: 5s
+    on_value:
+      then:
+        - script.execute:
+            id: led_control
+            channel: 2
+        - script.execute:
+            id: buzzer_control
+            action: !lambda "return x;"
+
+climate:
+  - platform: pid
+    id: climate_control1
+    name: "Channel 1 Climate Controller"
+    sensor: probe1_temperature
+    humidity_sensor: probe1_humidity
+    default_target_temperature: ${initial_target}
+    heat_output: heat_output1
+    visual:
+      min_temperature: ${min_temperature}
+      max_temperature: ${max_temperature}
+    control_parameters:
+      kp: ${initial_kp}
+      ki: ${initial_ki}
+      kd: ${initial_kd}
+      output_averaging_samples: 5
+      derivative_averaging_samples: 5
+    deadband_parameters:
+      threshold_high: ${deadband}
+      threshold_low: -${deadband}
+    on_control:
+      then:
+        - script.execute:
+            id: led_control
+            channel: 1
+
+  - platform: pid
+    id: climate_control2
+    name: "Channel 2 Climate Controller"
+    sensor: probe2_temperature
+    humidity_sensor: probe2_humidity
+    default_target_temperature: ${initial_target}
+    heat_output: heat_output2
+    visual:
+      min_temperature: ${min_temperature}
+      max_temperature: ${max_temperature}
+    control_parameters:
+      kp: ${initial_kp}
+      ki: ${initial_ki}
+      kd: ${initial_kd}
+      output_averaging_samples: 5
+      derivative_averaging_samples: 5
+    deadband_parameters:
+      threshold_high: ${deadband}
+      threshold_low: -${deadband}
+    on_control:
+      then:
+        - script.execute:
+            id: led_control
+            channel: 2
