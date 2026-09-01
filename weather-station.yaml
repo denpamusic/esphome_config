@@ -1,3 +1,4 @@
+---
 substitutions:
   name: "weather-station"
   friendly_name: "Multisensor Weather Station"
@@ -16,8 +17,8 @@ substitutions:
   deep_sleep_time: 5min
 
   # [Touch]
-  setup_mode: False
-  touch_wakeup: False
+  setup_mode: false
+  touch_wakeup: false
   touch_threshold: "300"
   touch_awake_time: 30s
   iir_filter: 10ms
@@ -56,27 +57,27 @@ esphome:
       # Restore Pressure Trend Update Time
       - if:
           condition:
-            lambda: 'return id(pressure_history_updated_at) != 0;'
+            lambda: "return id(pressure_history_updated_at) != 0;"
           then:
             - sensor.template.publish:
                 id: last_pressure_trend_update
-                state: !lambda 'return id(pressure_history_updated_at);'
+                state: !lambda "return id(pressure_history_updated_at);"
       # Restore Forecast String
       - if:
           condition:
-            lambda: 'return id(last_forecast_code) != 0;'
+            lambda: "return id(last_forecast_code) != 0;"
           then:
             - text_sensor.template.publish:
                 id: local_weather_forecast
-                state: !lambda 'return id(weather_forecast_map)[id(last_forecast_code)];'
+                state: !lambda "return id(weather_forecast_map)[id(last_forecast_code)];"
       # Restore Confidence Percentage
       - if:
           condition:
-            lambda: 'return id(last_forecast_confidence) > 0.0;'
+            lambda: "return id(last_forecast_confidence) > 0.0;"
           then:
             - sensor.template.publish:
                 id: local_forecast_confidence
-                state: !lambda 'return id(last_forecast_confidence);'
+                state: !lambda "return id(last_forecast_confidence);"
   on_shutdown:
     then:
       - lambda: "id(main_display).no_backlight();"
@@ -112,21 +113,24 @@ api:
 
 ota:
   - platform: esphome
-    password: !secret honey_ota_password
+    password: !secret honey__ota_password
 
 wifi:
   ssid: !secret wifi_iot_ssid
   password: !secret wifi_iot_password
-  fast_connect: True
+  power_save_mode: NONE
+  fast_connect:
+    enabled: true
+    storage: rtc
   ap:
     ssid: "${name} Fallback Hotspot"
-    password: !secret honey_fallback_password
+    password: !secret honey__fallback_password
 
 captive_portal:
 
 external_components:
   - source: github://krbaker/esphome-radsens@v1.0.1
-    components: [ radsens ]
+    components: [radsens]
     refresh: 1d
 
 mapping:
@@ -201,7 +205,7 @@ globals:
   - id: pressure_history
     type: float[4]
     restore_value: yes
-    initial_value: "{0.0, 0.0, 0.0, 0.0}"
+    initial_value: "{NAN, NAN, NAN, NAN}"
     
   - id: pressure_history_updated_at
     type: time_t
@@ -242,7 +246,7 @@ interval:
           event: esphome.environment_data_updated
     
 i2c:
-  scan: False
+  scan: false
   frequency: ${i2c_freq}
 
 deep_sleep:
@@ -251,9 +255,9 @@ deep_sleep:
 
 display:
   - platform: lcd_pcf8574
-    dimensions: 20x4
-    address: ${i2c_display}
     id: main_display
+    address: ${i2c_display}
+    dimensions: 20x4
     update_interval: ${default_update_interval}
     user_characters:
       - position: 0
@@ -364,8 +368,8 @@ binary_sensor:
     threshold: "${touch_threshold}"
 
   - platform: template
-    name: "Low Visibility Warning"
     id: low_visibility_warning
+    name: "Low Visibility Warning"
     icon: "mdi:weather-fog"
     device_class: problem
     lambda: |-
@@ -440,96 +444,91 @@ radsens:
 
 sensor:
   - platform: wifi_signal
-    name: "WLAN RSSI"
     id: wlan_rssi
+    name: "WLAN RSSI"
     update_interval: ${default_update_interval}
 
   - platform: sht3xd
     id: sht3xd_component
+    address: ${i2c_temperature}
+    heater_enabled: false
+    humidity:
+      id: air_humidity
+      name: "Air humidity"
+      accuracy_decimals: 1
     temperature:
-      name: "Air temperature"
       id: air_temperature
+      name: "Air temperature"
       accuracy_decimals: 1
       on_value:
         then:
           - component.update: precipitation_type
-    humidity:
-      name: "Air humidity"
-      id: air_humidity
-      accuracy_decimals: 1
-    address: ${i2c_temperature}
-    heater_enabled: false
     update_interval: ${default_update_interval}
 
   - platform: template
     id: precipitation_type
-    update_interval: never
     lambda: |-
       if (!id(air_temperature).has_state()) return {};
       float t = id(air_temperature).state;
       if (t <= 0.5) return 0; // Snow
       if (t <= 2.5) return 1; // Rain & Snow
       return 2;               // Rain
-    
+    update_interval: never
   - platform: bmp280_i2c
     id: bmp280_component
+    address: ${i2c_pressure}
+    pressure:
+      id: atmospheric_pressure
+      name: "Atmospheric pressure"
     temperature:
       name: "Chassis temperature"
-    pressure:
-      name: "Atmospheric pressure"
-      id: atmospheric_pressure
-    address: ${i2c_pressure}
     update_interval: ${default_update_interval}
 
   - platform: absolute_humidity
-    name: Absolute Humidity
-    temperature: air_temperature
+    name: "Absolute Humidity"
     humidity: air_humidity
+    temperature: air_temperature
 
   - platform: dew_point
     id: calculated_dew_point
     name: "Dew point"
-    temperature: air_temperature
     humidity: air_humidity
     on_value:
       then:
         - component.update: dew_point_spread
+    temperature: air_temperature
 
   - platform: template
-    name: "Dew Point Spread"
     id: dew_point_spread
+    name: "Dew Point Spread"
     icon: "mdi:weather-rainy"
-    unit_of_measurement: "°C"
-    state_class: measurement
     entity_category: diagnostic
-    update_interval: ${default_update_interval}
     lambda: |-
       if (id(air_temperature).has_state() && id(calculated_dew_point).has_state()) {
         return id(air_temperature).state - id(calculated_dew_point).state;
       }
       return {};
-          
+    state_class: measurement
+    unit_of_measurement: "°C"
+    update_interval: ${default_update_interval}
   - platform: template
     id: equivalent_sea_level_pressure
     name: "Equivalent sea-level pressure"
     icon: "mdi:gauge"
-    unit_of_measurement: "hPa"
-    state_class: "measurement"
-    update_interval: ${default_update_interval}
     lambda: |-
       if (id(atmospheric_pressure).has_state() && id(air_temperature).has_state()) {     
         return id(atmospheric_pressure).state / powf(1 - ((0.0065 * ${station_altitude}) /
           (id(air_temperature).state + (0.0065 * ${station_altitude}) + 273.15)), 5.257);
       }
       return {};
+    state_class: "measurement"
+    unit_of_measurement: "hPa"
+    update_interval: ${default_update_interval}
     
   - platform: template
     id: heat_index
     name: "Heat index"
-    unit_of_measurement: "°C"
     icon: "mdi:sun-thermometer"
-    state_class: "measurement"
-    update_interval: ${default_update_interval}
     lambda: |-
         if (isnan(id(air_temperature).state) || isnan(id(air_humidity).state)) return {};
 
@@ -554,24 +553,29 @@ sensor:
         }
         
         return (heat_index - 32.0) * (5.0 / 9.0);
+    state_class: "measurement"
+    unit_of_measurement: "°C"
+    update_interval: ${default_update_interval}
 
   - platform: radsens
     dynamic_intensity:
       id: dynamic_intensity
       name: "Dynamic Intensity"
-      unit_of_measurement: "μSv/h"
       filters:
         - multiply: 0.01
+      unit_of_measurement: "μSv/h"
     static_intensity:
       name: "Static Intensity"
-      unit_of_measurement: "μSv/h"
       filters:
         - multiply: 0.01
+      unit_of_measurement: "μSv/h"
           
   - platform: template
     id: last_pressure_trend_update
     name: "Last atmospheric pressure trend update"
     icon: "mdi:update"
+    device_class: timestamp
+    entity_category: diagnostic
     lambda: |-
      ESP_LOGD("forecast", "Pressure history over 3 hours. (current: %.1f hPa, 1h: %.1f hPa, 2h: %.1f hPa, 3h: %.1f hPa)",
         id(pressure_history)[0],
@@ -590,8 +594,6 @@ sensor:
       }
       
       return id(pressure_history_updated_at);
-    device_class: timestamp
-    entity_category: diagnostic
     update_interval: ${default_update_interval}
     on_value:
       then:
@@ -599,9 +601,8 @@ sensor:
 
   - platform: template
     id: pressure_trend_index
-    update_interval: never
     lambda: |-
-      if (id(pressure_history)[0] == 0.0 || id(pressure_history)[3] == 0.0) return {};
+      if (isnan(id(pressure_history)[0]) || isnan(id(pressure_history)[3])) return {};
       float delta_p = id(pressure_history)[0] - id(pressure_history)[3];
       if (delta_p <= -1.5) return -2; // Falling Fast
       if (delta_p < -0.5) return -1;  // Falling
@@ -612,24 +613,22 @@ sensor:
       then:
         - text_sensor.template.publish:
             id: pressure_trend
-            state: !lambda 'return id(pressure_trend_map)[(int)x];'
+            state: !lambda "return id(pressure_trend_map)[(int)x];"
         - component.update: pressure_rate
           
   - platform: template
-    name: "Atmospheric Pressure Rate"
     id: pressure_rate
+    name: "Atmospheric Pressure Rate"
     icon: "mdi:trending-up"
-    update_interval: never
-    unit_of_measurement: "hPa/h"
     accuracy_decimals: 1
-    state_class: measurement
     lambda: |-     
-      if (id(pressure_history)[0] == 0.0 || id(pressure_history)[3] == 0.0) return {};
+      if (isnan(id(pressure_history)[0]) || isnan(id(pressure_history)[3])) return {};
       return (id(pressure_history)[0] - id(pressure_history)[3]) / 3.0;
-      
+    state_class: measurement
+    unit_of_measurement: "hPa/h"
+    update_interval: never
   - platform: template
     id: local_weather_index
-    update_interval: ${default_update_interval}
     lambda: |-
       if (isnan(id(equivalent_sea_level_pressure).state) || 
           isnan(id(dew_point_spread).state) || 
@@ -691,20 +690,17 @@ sensor:
     on_value:
       - globals.set:
           id: last_forecast_code
-          value: !lambda 'return (int)x;'
+          value: !lambda "return (int)x;"
       - text_sensor.template.publish:
           id: local_weather_forecast
           state: !lambda 'return id(weather_forecast_map)[(int)x];'
       - component.update: local_forecast_confidence
 
   - platform: template
-    name: "Forecast Confidence"
     id: local_forecast_confidence
+    name: "Forecast Confidence"
     icon: "mdi:percent"
-    unit_of_measurement: "%"
     accuracy_decimals: 0
-    state_class: measurement
-    update_interval: never
     lambda: |-
       if (isnan(id(local_weather_index).state)) return {};
 
@@ -738,7 +734,7 @@ sensor:
     on_value:
       - globals.set:
           id: last_forecast_confidence
-          value: !lambda 'return x;'
+          value: !lambda "return x;"
 
 text_sensor: 
   - platform: template
