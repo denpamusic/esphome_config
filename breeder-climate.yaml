@@ -28,6 +28,9 @@ substitutions:
   max_temperature: 35°C
   deadband: 0.5°C
 
+  # [SSR]
+  temperature_threshold: 33
+
   # [Tunes]
   tune_boot: "system_boot:d=8,o=7,b=160:e,b"
   tune_autotune_start: "autotune_start:d=8,o=5,b=200:c,e,g,c6"
@@ -137,6 +140,16 @@ globals:
   type: bool
   restore_value: false
   initial_value: "false"
+
+  - id: last_temp1
+    type: float
+    restore_value: false
+    initial_value: "NAN"
+
+  - id: last_temp2
+    type: float
+    restore_value: false
+    initial_value: "NAN"
   
 script:
   - id: mark_boot_done
@@ -167,6 +180,53 @@ script:
     then:
       - delay: 1s
       - component.update: pvvx_display2
+
+  - id: check_relay
+    mode: queued
+    parameters:
+      channel: int
+    then:
+      - lambda: |-
+          if (!id(boot_done)) return;
+          
+          float *previous_temperature;
+          float current_temperature;
+          float heat_level;
+          binary_sensor::BinarySensor *fault_sensor;
+
+          if (channel == 1) {
+            current_temperature = id(probe1_temperature).state;
+            previous_temperature = &id(last_temp1);
+            heat_level = id(heat_level1).state;
+            fault_sensor = id(relay1_runaway);
+          } else if (channel == 2) {
+            current_temperature = id(probe2_temperature).state;
+            previous_temperature = &id(last_temp2);
+            heat_level = id(heat_level2).state;
+            fault_sensor = id(relay2_runaway);
+          } else {
+            return; // Invalid channel
+          }
+
+          if (isnan(current_temperature)) {
+            fault_sensor->invalidate_state();
+            *previous_temperature = NAN;
+            return;
+          };
+
+          if (heat_level == 0.0 && current_temperature > ${temperature_threshold}) {
+            if (!isnan(*previous_temperature)) {
+              if (current_temperature >= (*previous_temperature - 0.5)) {
+                fault_sensor->publish_state(true);
+              } else {
+                fault_sensor->publish_state(false);
+              }
+            }
+            *previous_temperature = current_temperature;
+          } else {
+            fault_sensor->publish_state(false);
+            *previous_temperature = NAN;
+          }
 
   - id: buzzer_control
     mode: queued
@@ -251,6 +311,16 @@ script:
             call.set_effect(new_effect);
             call.perform();
           }
+          
+interval:
+  - interval: 5min
+    then:
+      - script.execute:
+          id: check_relay
+          channel: 1
+      - script.execute:
+          id: check_relay
+          channel: 2
           
 output:
   - platform: slow_pwm
@@ -449,6 +519,15 @@ binary_sensor:
     device_class: connectivity
     lambda: "return !isnan(id(probe2_temperature).state);"
 
+  - platform: template
+    id: relay1_runaway
+    name: "Channel 1 SSR Status"
+    device_class: problem
+
+  - platform: template
+    id: relay2_runaway
+    name: "Channel 2 SSR Status"
+    device_class: problem
 sensor:
   - platform: internal_temperature
     name: "Internal Temperature"
