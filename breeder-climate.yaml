@@ -332,6 +332,33 @@ output:
       then:
         - output.set_level:
             id: red_led1
+
+  - platform: template
+    id: heat_monitor_proxy1
+    type: float
+    write_action:
+      - output.set_level:
+          id: heat_output1
+          level: !lambda "return state;"
+      - sensor.template.publish:
+          id: heat_level1
+          state: !lambda "return state;"
+                
+  - platform: template
+    id: heat_control_proxy1
+    type: float
+    write_action:
+      - if:
+          condition:
+            - switch.is_on: manual_override1
+          then:
+            - output.set_level:
+                id: heat_monitor_proxy1
+                level: 1.0
+          else:
+            - output.set_level:
+                id: heat_monitor_proxy1
+                level: !lambda "return state;"
             level: !lambda "return state;"
   
   - platform: slow_pwm
@@ -343,6 +370,33 @@ output:
       then:
         - output.set_level:
             id: red_led2
+
+  - platform: template
+    id: heat_monitor_proxy2
+    type: float
+    write_action:
+      - output.set_level:
+          id: heat_output2
+          level: !lambda "return state;"
+      - sensor.template.publish:
+          id: heat_level2
+          state: !lambda "return state;"
+                
+  - platform: template
+    id: heat_control_proxy2
+    type: float
+    write_action:
+      - if:
+          condition:
+            - switch.is_on: manual_override2
+          then:
+            - output.set_level:
+                id: heat_monitor_proxy2
+                level: 1.0
+          else:
+            - output.set_level:
+                id: heat_monitor_proxy2
+                level: !lambda "return state;"
             level: !lambda "return state;"
 
   - platform: slow_pwm
@@ -537,6 +591,17 @@ sensor:
     name: "WLAN RSSI"
     update_interval: 60s
   
+  - platform: template
+    id: heat_level1
+    name: "Channel 1 Heat Output"
+    icon: "mdi:radiator"
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 100.0
+      - round: 1
+
   - platform: pid_autotune
     climate_id: climate_control1
     rules: NO_OVERSHOOT_PID
@@ -611,6 +676,17 @@ sensor:
     climate_id: climate_control1
     entity_category: diagnostic
     
+  - platform: template
+    id: heat_level2
+    name: "Channel 2 Heat Output"
+    icon: "mdi:radiator"
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 100.0
+      - round: 1
+
   - platform: pid
     name: "Channel 2 PID Result"
     type: HEAT
@@ -750,6 +826,43 @@ switch:
   - platform: pid_autotune
     name: "Channel 2 Autotune"
     climate_id: climate_control2
+
+  - platform: template
+    id: manual_override1
+    name: "Channel 1 Manual Override"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - climate.control:
+          id: climate_control1
+          mode: "OFF"
+      - delay: 100ms
+      - output.set_level:
+          id: heat_monitor_proxy1
+          level: 1.0
+    turn_off_action:
+      - output.set_level:
+          id: heat_monitor_proxy1
+          level: 0.0
+
+  - platform: template
+    id: manual_override2
+    name: "Channel 2 Manual Override"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - climate.control:
+          id: climate_control2
+          mode: "OFF"
+      - delay: 100ms
+      - output.set_level:
+          id: heat_monitor_proxy2
+          level: 1.0
+    turn_off_action:
+      - output.set_level:
+          id: heat_monitor_proxy2
+          level: 0.0
+          
 number:
   - platform: template
     id: climate_control1_kp
@@ -918,7 +1031,7 @@ climate:
     sensor: probe1_temperature
     humidity_sensor: probe1_humidity
     default_target_temperature: ${initial_target}
-    heat_output: heat_output1
+    heat_output: heat_control_proxy1
     visual:
       min_temperature: ${min_temperature}
       max_temperature: ${max_temperature}
@@ -943,7 +1056,7 @@ climate:
     sensor: probe2_temperature
     humidity_sensor: probe2_humidity
     default_target_temperature: ${initial_target}
-    heat_output: heat_output2
+    heat_output: heat_control_proxy2
     visual:
       min_temperature: ${min_temperature}
       max_temperature: ${max_temperature}
