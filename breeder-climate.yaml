@@ -68,6 +68,12 @@ esphome:
         - light.turn_on:
             id: green_led2
             effect: "Fast Blink"
+        - light.turn_on:
+            id: red_led1
+            effect: "Fast Blink"
+        - light.turn_on:
+            id: red_led2
+            effect: "Fast Blink"
     - priority: -100
       then:
         - climate.pid.set_control_parameters:
@@ -136,10 +142,10 @@ wifi:
 captive_portal:
 
 globals:
-  id: boot_done
-  type: bool
-  restore_value: false
-  initial_value: "false"
+  - id: boot_done
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
   - id: last_temp1
     type: float
@@ -150,24 +156,38 @@ globals:
     type: float
     restore_value: false
     initial_value: "NAN"
+
+  - id: led_lock1
+    type: bool
+    restore_value: false
+    initial_value: "true"
+
+  - id: led_lock2
+    type: bool
+    restore_value: false
+    initial_value: "true"
   
 script:
   - id: mark_boot_done
     mode: single
     then:
-      - delay: 5s
+      - delay: 3s
       - globals.set:
           id: boot_done
           value: "true"
       - script.execute:
-          id: led_control
+          id: update_leds
           channel: 1
       - script.execute:
-          id: led_control
+          id: update_leds
           channel: 2
       - script.execute:
-          id: buzzer_control
-          action: "Boot"
+          id: check_relay
+          channel: 1
+      - script.execute:
+          id: check_relay
+          channel: 2
+      - script.execute: trigger_alarm
 
   - id: queue_display1_update
     mode: restart
@@ -180,7 +200,7 @@ script:
     then:
       - delay: 1s
       - component.update: pvvx_display2
-
+              
   - id: check_relay
     mode: queued
     parameters:
@@ -228,41 +248,7 @@ script:
             *previous_temperature = NAN;
           }
 
-  - id: buzzer_control
-    mode: queued
-    parameters:
-      action: string
-    then:
-      - if:
-          condition:
-            - lambda: 'return action == "Boot";'
-          then:
-            - rtttl.play:
-                id: buzzer
-                rtttl: ${tune_boot}
-      - if:
-          condition:
-            - lambda: 'return action == "Running";'
-          then:
-            - rtttl.play:
-                id: buzzer
-                rtttl: ${tune_autotune_start}
-      - if:
-          condition:
-            - lambda: 'return action == "Finished";'
-          then:
-            - rtttl.play:
-                id: buzzer
-                rtttl: ${tune_autotune_success}
-      - if:
-          condition:
-            - lambda: 'return action == "Failed";'
-          then:
-            - rtttl.play:
-                id: buzzer
-                rtttl: ${tune_autotune_fail}
-
-  - id: led_control
+  - id: update_leds
     mode: queued
     parameters:
       channel: int
@@ -273,45 +259,98 @@ script:
           bool is_autotune;
           bool is_climate_off;
           bool is_sensor_connected;
-          light::LightState *led;
+          bool is_runaway;
+          bool is_heater_off;
+          bool *led_lock;
+          light::LightState *green_led;
+          light::LightState *red_led;
+          std::string new_effect;
 
-          // Map the parameters based on the channel passed
           if (channel == 1) {
             is_autotune = id(autotune_status1).state == "Running";
             is_climate_off = id(climate_control1).mode == CLIMATE_MODE_OFF;
             is_sensor_connected = id(sensor1_connected).state;
-            led = id(green_led1);
+            is_heater_off = id(heat_level1).state == 0.0;
+            is_runaway = id(relay1_runaway).state;
+            green_led = id(green_led1);
+            red_led = id(red_led1);
+            led_lock = &id(led_lock1);
           } else if (channel == 2) {
             is_autotune = id(autotune_status2).state == "Running";
             is_climate_off = id(climate_control2).mode == CLIMATE_MODE_OFF;
             is_sensor_connected = id(sensor2_connected).state;
-            led = id(green_led2);
+            is_heater_off = id(heat_level2).state == 0.0;
+            is_runaway = id(relay2_runaway).state;
+            green_led = id(green_led2);
+            red_led = id(red_led2);
+            led_lock = &id(led_lock2);
           } else {
             return; // Invalid channel
           }
 
-          if (!is_autotune && is_climate_off) {
-            led->turn_off().perform();
-            return;
-          }
-
-          auto call = led->turn_on();
-          auto current_effect = led->get_effect_name();
-          std::string new_effect;
-          
-          if (!is_sensor_connected) {
-            new_effect = "Fast Blink";
-          } else if (is_autotune) {
-            new_effect = "Slow Pulse";
+          // Handle red led
+          if (is_heater_off && !is_runaway) {
+            red_led->turn_off().perform();
+            *led_lock = false;
           } else {
-            new_effect = "None";
+            bool led_is_locked = *led_lock;
+            if (is_runaway) {
+              new_effect = "Fast Blink";
+              *led_lock = true;
+            } else {
+              new_effect = "None";
+              *led_lock = false;
+            }
+
+            if ((led_is_locked && new_effect == "None") || red_led->get_effect_name() != new_effect) {
+              auto call = red_led->turn_on();
+              call.set_effect(new_effect);
+              call.perform();
+            }
           }
 
-          if (new_effect == "None" || current_effect != new_effect) {
-            call.set_effect(new_effect);
-            call.perform();
+          // Handle green led
+          if (is_climate_off && !is_autotune) {
+            green_led->turn_off().perform();
+          } else {
+            if (!is_sensor_connected) {
+              new_effect = "Fast Blink";
+            } else if (is_autotune) {
+              new_effect = "Slow Pulse";
+            } else {
+              new_effect = "None";
+            }
+
+            if (new_effect == "None" || green_led->get_effect_name() != new_effect) {
+              auto call = green_led->turn_on();
+              call.set_effect(new_effect);
+              call.perform();
+            }
           }
-          
+
+  - id: trigger_alarm
+    mode: single
+    then:
+      - while:
+          condition:
+            or:
+              - lambda: "return id(climate_control1).mode != CLIMATE_MODE_OFF && !id(sensor1_connected).state;"
+              - lambda: "return id(climate_control2).mode != CLIMATE_MODE_OFF && !id(sensor2_connected).state;"
+              - lambda: "return id(relay1_runaway).state || id(relay2_runaway).state;"
+          then:
+            - rtttl.play:
+                id: buzzer
+                rtttl: ${tune_sensor_fail}
+            - wait_until:
+                condition:
+                  not:
+                    rtttl.is_playing:
+                      id: buzzer
+            - delay: 500ms
+      - rtttl.play:
+          id: buzzer
+          rtttl: ${tune_confirm}
+
 interval:
   - interval: 5min
     then:
@@ -328,10 +367,25 @@ output:
     pin: ${relay1_pin}
     inverted: true
     id: heat_output1
-    state_change_action:
+
+  - platform: slow_pwm
+    period: ${pwm_period}
+    id: led_pwm1
+    inverted: true
+    turn_on_action:
       then:
-        - output.set_level:
-            id: red_led1
+        - if:
+            condition:
+              - lambda: "return !id(led_lock1);"
+            then:
+              - light.turn_off: red_led1
+    turn_off_action:
+      then:
+        - if:
+            condition:
+              - lambda: "return !id(led_lock1);"
+            then:
+              - light.turn_on: red_led1
 
   - platform: template
     id: heat_monitor_proxy1
@@ -343,6 +397,9 @@ output:
       - sensor.template.publish:
           id: heat_level1
           state: !lambda "return state;"
+      - output.set_level:
+          id: led_pwm1
+          level: !lambda "return state;"
                 
   - platform: template
     id: heat_control_proxy1
@@ -359,18 +416,32 @@ output:
             - output.set_level:
                 id: heat_monitor_proxy1
                 level: !lambda "return state;"
-            level: !lambda "return state;"
-  
+                
   - platform: slow_pwm
     period: ${pwm_period}
     pin: ${relay2_pin}
     inverted: true
     id: heat_output2
-    state_change_action:
-      then:
-        - output.set_level:
-            id: red_led2
 
+  - platform: slow_pwm
+    period: ${pwm_period}
+    id: led_pwm2
+    inverted: true
+    turn_on_action:
+      then:
+        - if:
+            condition:
+              - lambda: "return !id(led_lock2);"
+            then:
+              - light.turn_off: red_led2
+    turn_off_action:
+      then:
+        - if:
+            condition:
+              - lambda: "return !id(led_lock2);"
+            then:
+              - light.turn_on: red_led2
+            
   - platform: template
     id: heat_monitor_proxy2
     type: float
@@ -381,6 +452,9 @@ output:
       - sensor.template.publish:
           id: heat_level2
           state: !lambda "return state;"
+      - output.set_level:
+          id: led_pwm2
+          level: !lambda "return state;"
                 
   - platform: template
     id: heat_control_proxy2
@@ -397,20 +471,7 @@ output:
             - output.set_level:
                 id: heat_monitor_proxy2
                 level: !lambda "return state;"
-            level: !lambda "return state;"
-
-  - platform: slow_pwm
-    period: ${indication_period}
-    pin: ${red_led1_pin}
-    inverted: true
-    id: red_led1
-
-  - platform: slow_pwm
-    period: ${indication_period}
-    pin: ${red_led2_pin}
-    inverted: true
-    id: red_led2
-  
+           
   - platform: ledc
     pin: ${buzzer_pin}
     id: buzzer_pwm
@@ -423,6 +484,14 @@ output:
     pin: ${green_led2_pin}
     id: green_led2_output
 
+  - platform: ledc
+    pin: ${red_led1_pin}
+    id: red_led1_output
+
+  - platform: ledc
+    pin: ${red_led2_pin}
+    id: red_led2_output
+    
 rtttl:
   output: buzzer_pwm
   id: buzzer
@@ -455,6 +524,19 @@ light:
           update_interval: 2s
 
   - platform: monochromatic
+    id: red_led1
+    output: red_led1_output
+    default_transition_length: 0s
+    effects:
+      - strobe:
+          name: "Fast Blink"
+          colors:
+            - state: true
+              duration: 500ms
+            - state: false
+              duration: 500ms
+          
+  - platform: monochromatic
     id: green_led2
     output: green_led2_output
     default_transition_length: 0s
@@ -473,6 +555,19 @@ light:
             off_length: 1.5s
           update_interval: 2s
 
+  - platform: monochromatic
+    id: red_led2
+    output: red_led2_output
+    default_transition_length: 0s
+    effects:
+      - strobe:
+          name: "Fast Blink"
+          colors:
+            - state: true
+              duration: 500ms
+            - state: false
+              duration: 500ms
+          
 esp32_ble_tracker:
   scan_parameters:
     active: false
@@ -566,22 +661,71 @@ binary_sensor:
     name: "Channel 1 Sensor State"
     device_class: connectivity
     lambda: "return !isnan(id(probe1_temperature).state);"
-
+    filters:
+      - delayed_off: 5s
+    on_release:
+      then:
+        - if:
+            condition:
+              - lambda: "return id(climate_control1).mode != CLIMATE_MODE_OFF;"
+            then:
+              - script.execute: trigger_alarm
+    on_state_change:
+      then:
+        - script.execute:
+            id: update_leds
+            channel: 1
+    
   - platform: template
     id: sensor2_connected
     name: "Channel 2 Sensor State"
     device_class: connectivity
     lambda: "return !isnan(id(probe2_temperature).state);"
+    filters:
+      - delayed_off: 5s
+    on_release:
+      then:
+        - if:
+            condition:
+              - lambda: "return id(climate_control2).mode != CLIMATE_MODE_OFF;"
+            then:
+              - script.execute: trigger_alarm
+    on_state_change:
+      then:
+        - script.execute:
+            id: update_leds
+            channel: 2
 
   - platform: template
     id: relay1_runaway
     name: "Channel 1 SSR Status"
     device_class: problem
+    on_state_change:
+      then:
+        - if:
+            condition:
+              - lambda: "return !x;"
+            then:
+              - script.execute: trigger_alarm
+        - script.execute:
+            id: update_leds
+            channel: 1
 
   - platform: template
     id: relay2_runaway
     name: "Channel 2 SSR Status"
     device_class: problem
+    on_state_change:
+      then:
+        - if:
+            condition:
+              - lambda: "return !x;"
+            then:
+              - script.execute: trigger_alarm
+        - script.execute:
+            id: update_leds
+            channel: 2
+
 sensor:
   - platform: internal_temperature
     name: "Internal Temperature"
@@ -590,7 +734,7 @@ sensor:
   - platform: wifi_signal
     name: "WLAN RSSI"
     update_interval: 60s
-  
+
   - platform: template
     id: heat_level1
     name: "Channel 1 Heat Output"
@@ -672,7 +816,7 @@ sensor:
 
   - platform: pid
     name: "Channel 1 PID Result"
-    type: HEAT
+    type: RESULT
     climate_id: climate_control1
     entity_category: diagnostic
     
@@ -689,10 +833,10 @@ sensor:
 
   - platform: pid
     name: "Channel 2 PID Result"
-    type: HEAT
+    type: RESULT
     climate_id: climate_control2
     entity_category: diagnostic
-
+    
   - platform: dht
     pin:
       number: ${temperature_probe1_pin}
@@ -715,13 +859,6 @@ sensor:
                 - switch.turn_off: sensor1_power
                 - delay: 3s
                 - switch.turn_on: sensor1_power
-          - script.execute:
-              id: led_control
-              channel: 1
-      filters:
-        - or:
-            - throttle: 20s
-            - delta: 0.2
     humidity:
       name: "Channel 1 Humidity"
       id: probe1_humidity
@@ -743,7 +880,29 @@ sensor:
       - or:
           - throttle: 30s
           - delta: 0.2
-      
+
+  - platform: copy
+    id: probe1_display_temperature
+    source_id: probe1_temperature
+    filters:
+      - or:
+          - delta: ${display_temperature_delta}
+          - heartbeat: ${display_heartbeat}
+    on_value:
+      then:
+        - script.execute: queue_display1_update
+
+  - platform: copy
+    id: probe1_display_humidity
+    source_id: probe1_humidity
+    filters:
+      - or:
+          - delta: ${display_humidity_delta}
+          - heartbeat: ${display_heartbeat}
+    on_value:
+      then:
+        - script.execute: queue_display1_update
+            
   - platform: bthome_mithermometer
     mac_address: ${display1_mac}
     temperature:
@@ -752,10 +911,21 @@ sensor:
       name: "Display 1 Humidity"
     battery_level:
       name: "Display 1 Battery Level"
-    battery_voltage:
-      name: "Display 1 Battery Voltage"
     signal_strength:
       name: "Display 1 Signal"
+      disabled_by_default: true
+
+  - platform: bthome_mithermometer
+    mac_address: ${display2_mac}
+    temperature:
+      name: "Display 2 Temperature"
+    humidity:
+      name: "Display 2 Humidity"
+    battery_level:
+      name: "Display 2 Battery Level"
+    signal_strength:
+      name: "Display 2 Signal"
+      disabled_by_default: true
       
   - platform: dht
     pin:
@@ -779,13 +949,6 @@ sensor:
                 - switch.turn_off: sensor2_power
                 - delay: 3s
                 - switch.turn_on: sensor2_power
-          - script.execute:
-              id: led_control
-              channel: 2
-      filters:
-        - or:
-          - throttle: 20s
-          - delta: 0.2
     humidity:
       name: "Channel 2 Humidity"
       id: probe2_humidity
@@ -807,7 +970,29 @@ sensor:
       - or:
           - throttle: 30s
           - delta: 0.2
-    
+
+  - platform: copy
+    id: probe2_display_temperature
+    source_id: probe2_temperature
+    filters:
+      - or:
+          - delta: ${display_temperature_delta}
+          - heartbeat: ${display_heartbeat}
+    on_value:
+      then:
+        - script.execute: queue_display2_update
+
+  - platform: copy
+    id: probe2_display_humidity
+    source_id: probe2_humidity
+    filters:
+      - or:
+          - delta: ${display_humidity_delta}
+          - heartbeat: ${display_heartbeat}
+    on_value:
+      then:
+        - script.execute: queue_display2_update
+            
 switch:
   - platform: gpio
     pin: ${temperature_probe1_power_pin}
@@ -989,6 +1174,13 @@ text_sensor:
     name: "Display 1 MAC Address"
     lambda: 'return {"${display1_mac}"};'
     entity_category: diagnostic
+    disabled_by_default: true
+
+  - platform: template
+    name: "Display 2 MAC Address"
+    lambda: 'return {"${display2_mac}"};'
+    entity_category: diagnostic
+    disabled_by_default: true
 
   - platform: pid_autotune
     climate_id: climate_control1
@@ -998,7 +1190,7 @@ text_sensor:
       on_value:
         then:
           - script.execute:
-              id: led_control
+              id: update_leds
               channel: 1
           - rtttl.play:
               id: buzzer
@@ -1015,7 +1207,7 @@ text_sensor:
       on_value:
         then:
           - script.execute:
-              id: led_control
+              id: update_leds
               channel: 2
           - rtttl.play:
               id: buzzer
@@ -1044,12 +1236,19 @@ climate:
     deadband_parameters:
       threshold_high: ${deadband}
       threshold_low: -${deadband}
-    on_control:
+    on_state:
       then:
         - script.execute:
-            id: led_control
+            id: update_leds
             channel: 1
-
+        - if:
+            condition:
+              and:
+                - lambda: "return x.mode != CLIMATE_MODE_OFF;"
+                - switch.is_on: manual_override1
+            then:
+              - switch.turn_off: manual_override1
+            
   - platform: pid
     id: climate_control2
     name: "Channel 2 Climate Controller"
@@ -1069,8 +1268,15 @@ climate:
     deadband_parameters:
       threshold_high: ${deadband}
       threshold_low: -${deadband}
-    on_control:
+    on_state:
       then:
         - script.execute:
-            id: led_control
+            id: update_leds
             channel: 2
+        - if:
+            condition:
+              and:
+                - lambda: "return x.mode != CLIMATE_MODE_OFF;"
+                - switch.is_on: manual_override2
+            then:
+              - switch.turn_off: manual_override2
