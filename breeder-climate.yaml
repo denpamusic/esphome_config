@@ -13,7 +13,8 @@ substitutions:
   # [PID]
   pwm_period: 5s
   indication_period: 10s
-  measure_interval: 5s
+  measure_interval: 2s
+  oversampling: 5  # update_interval = measure_interval * oversampling
   initial_kp: 0.49460
   initial_ki: 0.00487
   initial_kd: 12.56301
@@ -520,8 +521,11 @@ sensor:
         pullup: false
     model: AM2302
     temperature:
-      name: "Channel 1 Temperature"
       id: probe1_temperature
+      filters:
+         - exponential_moving_average:
+            alpha: 0.2
+            send_every: ${oversampling}
       on_raw_value:
         then:
           - if:
@@ -543,10 +547,22 @@ sensor:
       id: probe1_humidity
       accuracy_decimals: 1
       filters:
+        - exponential_moving_average:
+            alpha: 0.2
+            send_every: ${oversampling}
         - or:
-            - throttle: 20s
+            - throttle: 30s
             - delta: 0.2
     update_interval: ${measure_interval}
+
+  - platform: copy
+    source_id: probe1_temperature
+    name: "Channel 1 Temperature"
+    accuracy_decimals: 2
+    filters:
+      - or:
+          - throttle: 30s
+          - delta: 0.2
       
   - platform: bthome_mithermometer
     mac_address: ${display1_mac}
@@ -569,8 +585,11 @@ sensor:
         pullup: false
     model: AM2302
     temperature:
-      name: "Channel 2 Temperature"
       id: probe2_temperature
+      filters:
+        - exponential_moving_average:
+            alpha: 0.2
+            send_every: ${oversampling}
       on_raw_value:
         then:
           - if:
@@ -592,10 +611,22 @@ sensor:
       id: probe2_humidity
       accuracy_decimals: 1
       filters:
+        - exponential_moving_average:
+            alpha: 0.2
+            send_every: ${oversampling}
         - or:
-          - throttle: 20s
-          - delta: 0.2
+            - throttle: 30s
+            - delta: 0.2
     update_interval: ${measure_interval}
+
+  - platform: copy
+    source_id: probe2_temperature
+    name: "Channel 2 Temperature"
+    accuracy_decimals: 2
+    filters:
+      - or:
+          - throttle: 30s
+          - delta: 0.2
     
 switch:
   - platform: gpio
