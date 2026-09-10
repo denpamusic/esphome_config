@@ -30,9 +30,10 @@ substitutions:
 
   # [Tunes]
   tune_boot: "system_boot:d=8,o=7,b=160:e,b"
-  tune_autotune_start: "autotune_start:d=8,o=7,b=200:c,e,g,c8"
-  tune_autotune_success: "autotune_success:d=8,o=7,b=200:e,g,b,c8"
-  tune_autotune_fail: "autotune_fail:d=4,o=7,b=120:c8,a,f"
+  tune_autotune_start: "autotune_start:d=8,o=5,b=200:c,e,g,c6"
+  tune_autotune_success: "autotune_success:d=8,o=5,b=200:c6,e6,g6,c7"
+  tune_autotune_fail: "autotune_fail:d=4,o=5,b=120:g,e,c"
+  tune_silence: "silence:d=4,o=5,b=125:128p"
 
   # [GPIOs]
   relay1_pin: GPIO18
@@ -106,8 +107,18 @@ ota:
 
 mdns: 
 
+mapping:
+  - id: autotune_rtttl_map
+    from: string
+    to: string
+    default_value: ${tune_silence}
+    entries:
+      "Running": ${tune_autotune_start}
+      "Finished": ${tune_autotune_success}
+      "Failed": ${tune_autotune_fail}
+  
 external_components:
-  - source: github://denpavibes/esphome-pid-autotune-sensors
+  - source: github://denpavibes/esphome-pid-autotune-status
     refresh: never
     
 wifi:
@@ -354,17 +365,19 @@ button:
     name: "Restart Node"
 
   - platform: template
-    name: "Channel 1 Autotune"
+    name: "Channel 1 Reset Integral Term"
     on_press:
-      - climate.pid.autotune: climate_control1
+      then:
+        - climate.pid.reset_integral_term: climate_control1
     entity_category: config
 
   - platform: template
-    name: "Channel 2 Autotune"
+    name: "Channel 2 Reset Integral Term"
     on_press:
-      - climate.pid.autotune: climate_control2
+      then:
+        - climate.pid.reset_integral_term: climate_control2
     entity_category: config
-    
+
 time:
   - platform: homeassistant
     id: ha_time
@@ -445,134 +458,86 @@ sensor:
     name: "WLAN RSSI"
     update_interval: 60s
   
-  - platform: pid
-    name: "Channel 1 Heat Output"
-    type: HEAT
-    climate_id: climate_control1
-
   - platform: pid_autotune
-    name: "Channel 1 Autotune Phase"
     climate_id: climate_control1
+    rules: NO_OVERSHOOT_PID
+    phase:
+      name: "Channel 1 Autotune Phase"
+    kp:
+      id: pid_kp1
+      filters:
+        - round: 5
+      on_value:
+        then:
+          - number.set:
+              id: climate_control1_kp
+              value: !lambda return x;
+    ki:
+      id: pid_ki1
+      filters:
+        - round: 5
+      on_value:
+        then:
+          - number.set:
+              id: climate_control1_ki
+              value: !lambda return x;
+    kd:
+      id: pid_kd1
+      filters:
+        - round: 5
+      on_value:
+        then:
+          - number.set:
+              id: climate_control1_kd
+              value: !lambda return x;
     update_interval: 5s
 
   - platform: pid_autotune
-    name: "Channel 2 Autotune Phase"
     climate_id: climate_control2
+    rules: NO_OVERSHOOT_PID
+    phase:
+      name: "Channel 2 Autotune Phase"
+    kp:
+      id: pid_kp2
+      filters:
+        - round: 5
+      on_value:
+        then:
+          - number.set:
+              id: climate_control2_kp
+              value: !lambda return x;
+    ki:
+      id: pid_ki2
+      filters:
+        - round: 5
+      on_value:
+        then:
+          - number.set:
+              id: climate_control2_ki
+              value: !lambda return x;
+    kd:
+      id: pid_kd2
+      filters:
+        - round: 5
+      on_value:
+        then:
+          - number.set:
+              id: climate_control2_kd
+              value: !lambda return x;
     update_interval: 5s
-    
-  - platform: pid
-    id: pid1_kp
-    type: KP
-    climate_id: climate_control1
-    entity_category: diagnostic
-    accuracy_decimals: 5
-    on_value:
-      then:
-        - if:
-            condition:
-              lambda: 'return id(climate_control1_kp).state != x;'
-            then:
-              - number.set:
-                  id: climate_control1_kp
-                  value: !lambda return x;
-                  
-  - platform: pid
-    id: pid1_ki
-    type: KI
-    climate_id: climate_control1
-    entity_category: diagnostic
-    accuracy_decimals: 5
-    on_value:
-      then:
-        - if:
-            condition:
-              lambda: 'return id(climate_control1_ki).state != x;'
-            then:
-              - number.set:
-                  id: climate_control1_ki
-                  value: !lambda return x;
-
-  - platform: pid
-    id: pid1_kd
-    type: KD
-    climate_id: climate_control1
-    entity_category: diagnostic
-    accuracy_decimals: 5
-    on_value:
-      then:
-        - if:
-            condition:
-              lambda: 'return id(climate_control1_kd).state != x;'
-            then:
-              - number.set:
-                  id: climate_control1_kd
-                  value: !lambda return x;
 
   - platform: pid
     name: "Channel 1 PID Result"
-    type: RESULT
+    type: HEAT
     climate_id: climate_control1
     entity_category: diagnostic
     
   - platform: pid
-    name: "Channel 2 Heat Output"
+    name: "Channel 2 PID Result"
     type: HEAT
     climate_id: climate_control2
-
-  - platform: pid
-    id: pid2_kp
-    type: KP
-    climate_id: climate_control2
     entity_category: diagnostic
-    accuracy_decimals: 5
-    on_value:
-      then:
-        - if:
-            condition:
-              lambda: 'return id(climate_control2_kp).state != x;'
-            then:
-              - number.set:
-                  id: climate_control2_kp
-                  value: !lambda return x;
 
-  - platform: pid
-    id: pid2_ki
-    type: KI
-    climate_id: climate_control2
-    entity_category: diagnostic
-    accuracy_decimals: 5
-    on_value:
-      then:
-        - if:
-            condition:
-              lambda: 'return id(climate_control2_ki).state != x;'
-            then:
-              - number.set:
-                  id: climate_control1_ki
-                  value: !lambda return x;
-
-  - platform: pid
-    id: pid2_kd
-    type: KD
-    climate_id: climate_control2
-    entity_category: diagnostic
-    accuracy_decimals: 5
-    on_value:
-      then:
-        - if:
-            condition:
-              lambda: 'return id(climate_control2_kd).state != x;'
-            then:
-              - number.set:
-                  id: climate_control2_kd
-                  value: !lambda return x;
-
-  - platform: pid
-    name: "Channel 2 PID Result"
-    type: RESULT
-    climate_id: climate_control2
-    entity_category: diagnostic
-    
   - platform: dht
     pin:
       number: ${temperature_probe1_pin}
@@ -699,6 +664,13 @@ switch:
     id: sensor2_power
     restore_mode: ALWAYS_ON
 
+  - platform: pid_autotune
+    name: "Channel 1 Autotune"
+    climate_id: climate_control1
+
+  - platform: pid_autotune
+    name: "Channel 2 Autotune"
+    climate_id: climate_control2
 number:
   - platform: template
     id: climate_control1_kp
@@ -827,32 +799,38 @@ text_sensor:
     entity_category: diagnostic
 
   - platform: pid_autotune
-    id: autotune_status1
-    name: "Channel 1 Autotune Status"
     climate_id: climate_control1
+    status:
+      id: autotune_status1
+      name: "Channel 1 Autotune Status"
+      on_value:
+        then:
+          - script.execute:
+              id: led_control
+              channel: 1
+          - rtttl.play:
+              id: buzzer
+              rtttl: !lambda "return id(autotune_rtttl_map)[x];"
+    error_message:
+      name: "Channel 1 Autotune Error"
     update_interval: 5s
-    on_value:
-      then:
-        - script.execute:
-            id: led_control
-            channel: 1
-        - script.execute:
-            id: buzzer_control
-            action: !lambda "return x;"
 
   - platform: pid_autotune
-    id: autotune_status2
-    name: "Channel 2 Autotune Status"
     climate_id: climate_control2
+    status:
+      id: autotune_status2
+      name: "Channel 2 Autotune Status"
+      on_value:
+        then:
+          - script.execute:
+              id: led_control
+              channel: 2
+          - rtttl.play:
+              id: buzzer
+              rtttl: !lambda "return id(autotune_rtttl_map)[x];"
+    error_message:
+      name: "Channel 2 Autotune Error"
     update_interval: 5s
-    on_value:
-      then:
-        - script.execute:
-            id: led_control
-            channel: 2
-        - script.execute:
-            id: buzzer_control
-            action: !lambda "return x;"
 
 climate:
   - platform: pid
