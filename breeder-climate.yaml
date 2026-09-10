@@ -9,6 +9,11 @@ substitutions:
 
   # [Display]
   display1_mac: !secret breeder_climate__display1_mac
+  display2_mac: !secret breeder_climate__display2_mac
+  display_heartbeat: 30min
+  display_validity_period: 35min
+  display_temperature_delta: 0.2
+  display_humidity_delta: 5.0
 
   # [PID]
   pwm_period: 5s
@@ -139,6 +144,18 @@ script:
       - script.execute:
           id: buzzer_control
           action: "Boot"
+
+  - id: queue_display1_update
+    mode: restart
+    then:
+      - delay: 1s
+      - component.update: pvvx_display1
+
+  - id: queue_display2_update
+    mode: restart
+    then:
+      - delay: 1s
+      - component.update: pvvx_display2
 
   - id: buzzer_control
     mode: queued
@@ -322,10 +339,15 @@ light:
           update_interval: 2s
 
 esp32_ble_tracker:
+  scan_parameters:
+    active: false
 
 ble_client:
   - mac_address: ${display1_mac}
     id: display1
+
+  - mac_address: ${display2_mac}
+    id: display2
 
 button:
   - platform: restart
@@ -349,17 +371,55 @@ time:
 
 display:
   - platform: pvvx_mithermometer
+    id: pvvx_display1
     ble_client_id: display1
-    update_interval: 1min
-    validity_period: 5min
+    update_interval: never
+    validity_period: ${display_validity_period}
+    disconnect_delay: 3s
     time_id: ha_time
     lambda: |-
       double temp = id(climate_control1).current_temperature;
       double target = id(climate_control1).target_temperature;
+      double humidity = id(climate_control1).current_humidity;
       it.print_bignum(temp);
-      it.print_unit(pvvx_mithermometer::UNIT_DEG_C);
-      it.print_smallnum(target);
+      if (fabs(temp - target) <= 0.2) {
+        it.print_unit(pvvx_mithermometer::UNIT_LINES);
+      } else {
+        it.print_unit(pvvx_mithermometer::UNIT_DEG_C);
+      }
+      it.print_smallnum(humidity);
+      it.print_percent(true);
+      if (fabs(temp - target) > 2 || humidity > 60.0) {
+        it.print_sad();
+      } else {
+        it.print_happy();
+      }
 
+  - platform: pvvx_mithermometer
+    id: pvvx_display2
+    ble_client_id: display2
+    update_interval: never
+    disconnect_delay: 3s
+    validity_period: ${display_validity_period}
+    time_id: ha_time
+    lambda: |-
+      double temp = id(climate_control2).current_temperature;
+      double target = id(climate_control2).target_temperature;
+      double humidity = id(climate_control2).current_humidity;
+      it.print_bignum(temp);
+      if (fabs(temp - target) <= 0.2) {
+        it.print_unit(pvvx_mithermometer::UNIT_LINES);
+      } else {
+        it.print_unit(pvvx_mithermometer::UNIT_DEG_C);
+      }
+      it.print_smallnum(humidity);
+      it.print_percent(true);
+      if (fabs(temp - target) > 2 || humidity > 60.0) {
+        it.print_sad();
+      } else {
+        it.print_happy();
+      }
+      
 binary_sensor:
   - platform: status
     name: "Node status"
