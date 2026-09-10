@@ -5,7 +5,7 @@ substitutions:
   # [Project]
   manufacturer: "lolin"
   project_name: "pid-climate-controller"
-  version: "1.0.0"
+  version: "1.0.1"
 
   # [Display]
   display1_mac: !secret breeder_climate__display1_mac
@@ -16,26 +16,26 @@ substitutions:
   display_humidity_delta: 5.0
 
   # [PID]
-  pwm_period: 5s
-  indication_period: 10s
+  pwm_period: 10s
   measure_interval: 2s
   oversampling: 5  # update_interval = measure_interval * oversampling
-  initial_kp: 0.49460
-  initial_ki: 0.00487
-  initial_kd: 12.56301
+  initial_kp: 0.0
+  initial_ki: 0.0
+  initial_kd: 0.0
   initial_target: 30°C
   min_temperature: 20°C
-  max_temperature: 35°C
-  deadband: 0.5°C
+  max_temperature: 32°C
+  deadband: 0.15°C
 
   # [SSR]
   temperature_threshold: 33
 
   # [Tunes]
-  tune_boot: "system_boot:d=8,o=7,b=160:e,b"
+  tune_confirm: "system_confirm:d=8,o=5,b=160:g,d6"
   tune_autotune_start: "autotune_start:d=8,o=5,b=200:c,e,g,c6"
   tune_autotune_success: "autotune_success:d=8,o=5,b=200:c6,e6,g6,c7"
   tune_autotune_fail: "autotune_fail:d=4,o=5,b=120:g,e,c"
+  tune_sensor_fail: "sensor_fail:d=8,o=6,b=400:b,c7,b,c7,b,c7,p"
   tune_silence: "silence:d=4,o=5,b=125:128p"
 
   # [GPIOs]
@@ -1233,9 +1233,8 @@ climate:
       kd: ${initial_kd}
       output_averaging_samples: 5
       derivative_averaging_samples: 5
-    deadband_parameters:
-      threshold_high: ${deadband}
-      threshold_low: -${deadband}
+      min_integral: 0 # Heating only
+      starting_integral_term: 0.5
     on_state:
       then:
         - script.execute:
@@ -1265,9 +1264,8 @@ climate:
       kd: ${initial_kd}
       output_averaging_samples: 5
       derivative_averaging_samples: 5
-    deadband_parameters:
-      threshold_high: ${deadband}
-      threshold_low: -${deadband}
+      min_integral: 0 # Heating only
+      starting_integral_term: 0.5
     on_state:
       then:
         - script.execute:
