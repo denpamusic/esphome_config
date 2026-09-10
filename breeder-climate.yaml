@@ -46,7 +46,6 @@ esphome:
   name: ${name}
   friendly_name: ${friendly_name}
   min_version: 2026.4.0
-  name_add_mac_suffix: false
   project:
     name: "${manufacturer}.${project_name}"
     version: ${version}
@@ -74,9 +73,17 @@ esphome:
         - script.execute: mark_boot_done
             
 esp32:
-  variant: esp32s3
+  variant: ESP32S3
+  board: lolin_s3_mini
   framework:
     type: esp-idf
+
+psram:
+  mode: quad
+  speed: 80MHz
+
+esp32_ble:
+  use_psram: true
 
 # Enable logging
 logger:
@@ -104,6 +111,7 @@ wifi:
     ssid: "${name} Fallback Hotspot"
     password: !secret breeder_climate__fallback_password
   reboot_timeout: 1h
+  use_psram: true
 
 captive_portal:
 
@@ -368,6 +376,10 @@ binary_sensor:
     lambda: "return !isnan(id(probe2_temperature).state);"
 
 sensor:
+  - platform: internal_temperature
+    name: "Internal Temperature"
+    disabled_by_default: true
+  
   - platform: wifi_signal
     name: "WLAN RSSI"
     update_interval: 60s
