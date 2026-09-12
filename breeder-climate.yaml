@@ -5,15 +5,24 @@ substitutions:
   # [Project]
   manufacturer: "lolin"
   project_name: "pid-climate-controller"
-  version: "1.0.1"
+  version: "1.0.2"
 
+  # [Sensors]
+  sensor_update_interval: 30s
+  sensor_temperature_delta: 0.2
+  sensor_humidity_delta: 0.5
+  
   # [Display]
   display1_mac: !secret breeder_climate__display1_mac
   display2_mac: !secret breeder_climate__display2_mac
   display_heartbeat: 30min
+  display_min_period: 60s
   display_validity_period: 35min
   display_temperature_delta: 0.2
   display_humidity_delta: 5.0
+  display_humidity_threshold: 60
+  display_temperature_threshold: 2
+  display_hi: 2000.0 # produces "Hi"
 
   # [PID]
   pwm_period: 10s
@@ -23,12 +32,13 @@ substitutions:
   initial_ki: 0.0
   initial_kd: 0.0
   initial_target: 30°C
+  initial_integral: 0.5
   min_temperature: 20°C
   max_temperature: 32°C
   deadband: 0.15°C
 
   # [SSR]
-  temperature_threshold: 33
+  warning_temperature: 33
 
   # [Tunes]
   tune_confirm: "system_confirm:d=8,o=5,b=160:g,d6"
@@ -193,13 +203,27 @@ script:
     mode: restart
     then:
       - delay: 1s
-      - component.update: pvvx_display1
+      - component.update: display1
+      - if:
+          condition:
+            - time.has_time:
+          then:
+            - sensor.template.publish:
+                id: display1_updated_at
+                state: !lambda "return id(ha_time).now().timestamp;"
 
   - id: queue_display2_update
     mode: restart
     then:
       - delay: 1s
-      - component.update: pvvx_display2
+      - component.update: display2
+      - if:
+          condition:
+            - time.has_time:
+          then:
+            - sensor.template.publish:
+                id: display2_updated_at
+                state: !lambda "return id(ha_time).now().timestamp;"
               
   - id: check_relay
     mode: queued
@@ -234,7 +258,7 @@ script:
             return;
           };
 
-          if (heat_level == 0.0 && current_temperature > ${temperature_threshold}) {
+          if (heat_level == 0.0 && current_temperature > ${warning_temperature}) {
             if (!isnan(*previous_temperature)) {
               if (current_temperature >= (*previous_temperature - 0.5)) {
                 fault_sensor->publish_state(true);
@@ -574,10 +598,10 @@ esp32_ble_tracker:
 
 ble_client:
   - mac_address: ${display1_mac}
-    id: display1
+    id: display1_client
 
   - mac_address: ${display2_mac}
-    id: display2
+    id: display2_client
 
 button:
   - platform: restart
@@ -597,14 +621,26 @@ button:
         - climate.pid.reset_integral_term: climate_control2
     entity_category: config
 
+  - platform: template
+    name: "Display 1 Force Refresh"
+    on_press:
+      then:
+        - script.execute: queue_display1_update
+
+  - platform: template
+    name: "Display 2 Force Refresh"
+    on_press:
+      then:
+        - script.execute: queue_display2_update
+
 time:
   - platform: homeassistant
     id: ha_time
 
 display:
   - platform: pvvx_mithermometer
-    id: pvvx_display1
-    ble_client_id: display1
+    id: display1
+    ble_client_id: display1_client
     update_interval: never
     validity_period: ${display_validity_period}
     disconnect_delay: 3s
@@ -613,23 +649,41 @@ display:
       double temp = id(climate_control1).current_temperature;
       double target = id(climate_control1).target_temperature;
       double humidity = id(climate_control1).current_humidity;
-      it.print_bignum(temp);
-      if (fabs(temp - target) <= 0.2) {
+      bool is_climate_off = id(climate_control1).mode == CLIMATE_MODE_OFF;
+    
+      if (isnan(temp)) {
+        it.print_bignum(${display_hi});
+        it.print_sad();
+        return;
+      }
+      
+      float temp_diff = fabs(temp - target);
+      if (!is_climate_off && (temp_diff <= ${display_temperature_delta})) {
+        it.print_bignum(target);
         it.print_unit(pvvx_mithermometer::UNIT_LINES);
       } else {
+        it.print_bignum(temp);
         it.print_unit(pvvx_mithermometer::UNIT_DEG_C);
       }
-      it.print_smallnum(humidity);
-      it.print_percent(true);
-      if (fabs(temp - target) > 2 || humidity > 60.0) {
+      
+      if (!isnan(humidity)) {
+        it.print_smallnum(humidity);
+        it.print_percent(true);
+      }
+
+      if (is_climate_off) return;
+      
+      bool temp_alert = temp_diff >= ${display_temperature_threshold};
+      bool humidity_alert = !isnan(humidity) && (humidity > ${display_humidity_threshold});
+      if (temp_alert || humidity_alert) {
         it.print_sad();
       } else {
         it.print_happy();
       }
 
   - platform: pvvx_mithermometer
-    id: pvvx_display2
-    ble_client_id: display2
+    id: display2
+    ble_client_id: display2_client
     update_interval: never
     disconnect_delay: 3s
     validity_period: ${display_validity_period}
@@ -638,15 +692,33 @@ display:
       double temp = id(climate_control2).current_temperature;
       double target = id(climate_control2).target_temperature;
       double humidity = id(climate_control2).current_humidity;
-      it.print_bignum(temp);
-      if (fabs(temp - target) <= 0.2) {
+      bool is_climate_off = id(climate_control2).mode == CLIMATE_MODE_OFF;
+    
+      if (isnan(temp)) {
+        it.print_bignum(${display_hi});
+        it.print_sad();
+        return;
+      }
+      
+      float temp_diff = fabs(temp - target);
+      if (!is_climate_off && (temp_diff <= ${display_temperature_delta})) {
+        it.print_bignum(target);
         it.print_unit(pvvx_mithermometer::UNIT_LINES);
       } else {
+        it.print_bignum(temp);
         it.print_unit(pvvx_mithermometer::UNIT_DEG_C);
       }
-      it.print_smallnum(humidity);
-      it.print_percent(true);
-      if (fabs(temp - target) > 2 || humidity > 60.0) {
+      
+      if (!isnan(humidity)) {
+        it.print_smallnum(humidity);
+        it.print_percent(true);
+      }
+
+      if (is_climate_off) return;
+      
+      bool temp_alert = temp_diff >= ${display_temperature_threshold};
+      bool humidity_alert = !isnan(humidity) && (humidity > ${display_humidity_threshold});
+      if (temp_alert || humidity_alert) {
         it.print_sad();
       } else {
         it.print_happy();
@@ -868,8 +940,8 @@ sensor:
             alpha: 0.2
             send_every: ${oversampling}
         - or:
-            - throttle: 30s
-            - delta: 0.2
+            - throttle: ${sensor_update_interval}
+            - delta: ${sensor_humidity_delta}
     update_interval: ${measure_interval}
 
   - platform: copy
@@ -878,8 +950,8 @@ sensor:
     accuracy_decimals: 2
     filters:
       - or:
-          - throttle: 30s
-          - delta: 0.2
+          - throttle: ${sensor_update_interval}
+          - delta: ${sensor_temperature_delta}
 
   - platform: copy
     id: probe1_display_temperature
@@ -888,6 +960,7 @@ sensor:
       - or:
           - delta: ${display_temperature_delta}
           - heartbeat: ${display_heartbeat}
+      - throttle: ${display_min_period}
     on_value:
       then:
         - script.execute: queue_display1_update
@@ -899,6 +972,7 @@ sensor:
       - or:
           - delta: ${display_humidity_delta}
           - heartbeat: ${display_heartbeat}
+      - throttle: ${display_min_period}
     on_value:
       then:
         - script.execute: queue_display1_update
@@ -958,8 +1032,8 @@ sensor:
             alpha: 0.2
             send_every: ${oversampling}
         - or:
-            - throttle: 30s
-            - delta: 0.2
+            - throttle: ${sensor_update_interval}
+            - delta: ${sensor_humidity_delta}
     update_interval: ${measure_interval}
 
   - platform: copy
@@ -968,8 +1042,8 @@ sensor:
     accuracy_decimals: 2
     filters:
       - or:
-          - throttle: 30s
-          - delta: 0.2
+          - throttle: ${sensor_update_interval}
+          - delta: ${sensor_temperature_delta}
 
   - platform: copy
     id: probe2_display_temperature
@@ -978,6 +1052,7 @@ sensor:
       - or:
           - delta: ${display_temperature_delta}
           - heartbeat: ${display_heartbeat}
+      - throttle: ${display_min_period}
     on_value:
       then:
         - script.execute: queue_display2_update
@@ -989,10 +1064,25 @@ sensor:
       - or:
           - delta: ${display_humidity_delta}
           - heartbeat: ${display_heartbeat}
+      - throttle: ${display_min_period}
     on_value:
       then:
         - script.execute: queue_display2_update
-            
+
+  - platform: template
+    id: display1_updated_at
+    name: "Display 1 Updated At"
+    device_class: timestamp
+    entity_category: diagnostic
+    disabled_by_default: true
+
+  - platform: template
+    id: display2_updated_at
+    name: "Display 2 Updated At"
+    device_class: timestamp
+    entity_category: diagnostic
+    disabled_by_default: true
+      
 switch:
   - platform: gpio
     pin: ${temperature_probe1_power_pin}
@@ -1233,8 +1323,11 @@ climate:
       kd: ${initial_kd}
       output_averaging_samples: 5
       derivative_averaging_samples: 5
-      min_integral: 0 # Heating only
-      starting_integral_term: 0.5
+      min_integral: 0  # Heating only
+      starting_integral_term: ${initial_integral}
+    on_control:
+      then:
+        - script.execute: queue_display1_update
     on_state:
       then:
         - script.execute:
@@ -1264,8 +1357,11 @@ climate:
       kd: ${initial_kd}
       output_averaging_samples: 5
       derivative_averaging_samples: 5
-      min_integral: 0 # Heating only
-      starting_integral_term: 0.5
+      min_integral: 0  # Heating only
+      starting_integral_term: ${initial_integral}
+    on_control:
+      then:
+        - script.execute: queue_display2_update
     on_state:
       then:
         - script.execute:
