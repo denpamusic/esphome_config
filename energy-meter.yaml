@@ -3,10 +3,10 @@ substitutions:
   friendly_name: "Energy Meter Stream Server"
 
   # [Project]
-  platform: "esp32dev"
   manufacturer: "espressif"
   project_name: "energy-meter-proxy"
-  version: "2.0.2"
+  version: "2.0.4"
+  serial_number: "41920942"
 
   # [UART]
   baudrate: "9600"
@@ -30,11 +30,23 @@ esphome:
   project:
     name: ${manufacturer}.${project_name}
     version: ${version}
+  on_boot:
+    priority: 600
+    then:
+      - component.update: pending_errors
+      - if:
+          condition:
+            - binary_sensor.is_on: optical_port
+          then:
+            - light.turn_on: connection_status
+          else:
+            - light.turn_off: connection_status
+      
 
 esp32:
-  board: ${platform}
+  board: esp32dev
   framework:
-    type: arduino
+    type: esp-idf
     advanced:
       minimum_chip_revision: "3.1"
       sram1_as_iram: true
@@ -43,31 +55,53 @@ esp32:
 logger:
   baud_rate: 0
 
-mdns:
-
 # Enable Home Assistant API
 api:
   encryption:
-    key: !secret strawberry_api_key
+    key: !secret strawberry__api_key
+  actions:
+    - action: reset_pending_errors
+      then:
+        - globals.set:
+            id: error_number
+            value: "0"
+
+mdns:
+            
+globals:
+  id: error_number
+  type: int
+  restore_value: True
+  initial_value: "0"
 
 ota:
   - platform: esphome
-    password: !secret strawberry_ota_password
+    encryption:
 
 wifi:
   ssid: !secret wifi_iot2_ssid
   password: !secret wifi_iot2_password
   ap:
     ssid: "${name} Fallback Hotspot"
-    password: !secret strawberry_fallback_password
+    password: !secret strawberry__fallback_password
+
+  manual_ip:
+    static_ip: !secret strawberry__ip
+    gateway: 192.168.2.1
+    subnet: 255.255.255.0
 
 captive_portal:
 
 external_components:
-  - source: github://latonita/esphome-dlms-cosem
+  - source: github://denpaforks/esphome-dlms-cosem
     components: [ dlms_cosem ]
-    refresh: 1s
 
+interval:
+  - interval: 24h
+    startup_delay: 24h
+    then:
+      - button.press: restart_node
+    
 uart:
   baud_rate: ${baudrate}
   data_bits: ${data_bits}
@@ -75,6 +109,7 @@ uart:
   stop_bits: ${stop_bits}
   tx_pin: ${tx_pin}
   rx_pin: ${rx_pin}
+  rx_buffer_size: 2048
 
 dlms_cosem:
   client_address: 32
@@ -82,12 +117,14 @@ dlms_cosem:
     logical_device: 1
     physical_device: 42
     address_length: 2
+  delay_between_requests: 25ms
   auth: true
-  password: !secret strawberry_meter_password
+  password: !secret strawberry__meter_password
   update_interval: ${dlms_update_interval}
 
 button:
   - platform: restart
+    id: restart_node
     name: "Restart node"
 
 sensor:
@@ -177,7 +214,7 @@ sensor:
   - platform: dlms_cosem
     name: "Apparent power total"
     obis_code: 1.0.9.7.0.255
-    unit_of_measurement: W
+    unit_of_measurement: VA
     accuracy_decimals: 1
     device_class: apparent_power
     state_class: measurement
@@ -185,7 +222,7 @@ sensor:
   - platform: dlms_cosem
     name: "Apparent power L1"
     obis_code: 1.0.29.7.0.255
-    unit_of_measurement: W
+    unit_of_measurement: VA
     accuracy_decimals: 1
     device_class: apparent_power
     state_class: measurement
@@ -193,7 +230,7 @@ sensor:
   - platform: dlms_cosem
     name: "Apparent power L2"
     obis_code: 1.0.49.7.0.255
-    unit_of_measurement: W
+    unit_of_measurement: VA
     accuracy_decimals: 1
     device_class: apparent_power
     state_class: measurement
@@ -201,7 +238,7 @@ sensor:
   - platform: dlms_cosem
     name: "Apparent power L3"
     obis_code: 1.0.69.7.0.255
-    unit_of_measurement: W
+    unit_of_measurement: VA
     accuracy_decimals: 1
     device_class: apparent_power
     state_class: measurement
@@ -212,6 +249,10 @@ sensor:
     accuracy_decimals: 3
     device_class: power_factor
     state_class: measurement
+    filters:
+      - or:
+        - throttle: 60s
+        - delta: 0.05
 
   - platform: dlms_cosem
     name: "Power factor L1"
@@ -219,6 +260,10 @@ sensor:
     accuracy_decimals: 3
     device_class: power_factor
     state_class: measurement
+    filters:
+      - or:
+        - throttle: 60s
+        - delta: 0.05
 
   - platform: dlms_cosem
     name: "Power factor L2"
@@ -226,6 +271,10 @@ sensor:
     accuracy_decimals: 3
     device_class: power_factor
     state_class: measurement
+    filters:
+      - or:
+        - throttle: 60s
+        - delta: 0.05
 
   - platform: dlms_cosem
     name: "Power factor L3"
@@ -233,6 +282,10 @@ sensor:
     accuracy_decimals: 3
     device_class: power_factor
     state_class: measurement
+    filters:
+      - or:
+        - throttle: 60s
+        - delta: 0.05
 
   - platform: dlms_cosem
     name: "Active energy total"
@@ -245,6 +298,7 @@ sensor:
       - multiply: 0.001
 
   - platform: dlms_cosem
+    id: energy_tariff1
     name: "Active energy tariff 1"
     obis_code: 1.0.1.8.1.255
     unit_of_measurement: kWh
@@ -255,6 +309,7 @@ sensor:
       - multiply: 0.001
 
   - platform: dlms_cosem
+    id: energy_tariff2
     name: "Active energy tariff 2"
     obis_code: 1.0.1.8.2.255
     unit_of_measurement: kWh
@@ -271,6 +326,10 @@ sensor:
     accuracy_decimals: 2
     device_class: frequency
     state_class: measurement
+    filters:
+      - or:
+        - throttle: 60s
+        - delta: 0.1
 
   - platform: dlms_cosem
     name: "Internal temperature"
@@ -287,13 +346,42 @@ sensor:
     obis_class: 1
     accuracy_decimals: 0
     entity_category: diagnostic
+    on_value:
+      then:
+        - component.update: human_readable_tariff
 
   - platform: dlms_cosem
-    id: "self_test"
+    id: self_test
     obis_code: 0.0.97.97.0.255
     obis_class: 1
     accuracy_decimals: 0
     entity_category: diagnostic
+    on_value:
+      then:
+        - if:
+            condition:
+              - and:
+                - lambda: "return x != 0.0;"
+                - lambda: "return id(error_number) != (int)x;"
+            then:
+              - globals.set:
+                  id: error_number
+                  value: !lambda "return (id(error_number) | (int)x);"
+              - component.update: pending_errors
+
+  - platform: template
+    name: "Night tariff utilization"
+    icon: "mdi:lightbulb-night"
+    lambda: |-
+      if (isnan(id(energy_tariff1).state) || isnan(id(energy_tariff2).state) || id(energy_tariff1).state == 0.0) {
+        return {};
+      } else {
+        return (id(energy_tariff2).state / id(energy_tariff1).state) * 100.0;
+      }
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    state_class: measurement
+
 
 text_sensor:
   - platform: wifi_info
@@ -302,32 +390,79 @@ text_sensor:
     mac_address:
       name: "MAC Address"
 
+  - platform: template
+    name: "Serial number"
+    icon: "mdi:barcode"
+    lambda: "return \"${serial_number}\";"
+    entity_category: diagnostic
+
   - platform: dlms_cosem
-    name: "Date"
+    name: "Date and time"
+    icon: "mdi:calendar"
     obis_code: 0.0.1.0.0.255
     entity_category: diagnostic
     obis_class: 8
 
   - platform: dlms_cosem
-    name: "Serial number"
-    obis_code: 0.0.96.1.0.255
+    name: "Clock synced at"
+    icon: "mdi:clock-check"
+    device_class: timestamp
+    obis_code: 0.0.96.2.12.255
     entity_category: diagnostic
+    obis_class: 1
+    cp1251: False
+    data_type: datetime
+    filters:
+      - lambda: |-
+          return x.substr(0, 10) + "T" + x.substr(11, 8) + x.substr(23);
+
+  - platform: template
+    id: pending_errors
+    name: "Pending errors"
+    icon: "mdi:alert-circle"
+    update_interval: never
+    lambda: |-
+      if(id(error_number) == -1) {
+        return {};
+      }
+      if(id(error_number) == 0) {
+        return "None";
+      }
+      std::string error_string = "";
+      int error_length = sizeof(error_number);
+      for (int index = 0; index < (error_length - 1); ++index) {
+        if (id(error_number) & (1 << index)) {
+          if (!error_string.empty()) {
+            error_string += ", ";
+          }
+          char buf[8];
+          snprintf(buf, sizeof(buf), "E-%02d", index + 1);
+          error_string += buf;
+        }
+      }
+      return error_string;
+    entity_category: diagnostic
+
+#  - platform: dlms_cosem
+#    name: "Serial number"
+#    icon: "mdi:barcode"
+#    obis_code: 0.0.96.1.0.255
+#    entity_category: diagnostic
+
+  - platform: template
+    id: human_readable_tariff
+    name: "Current Tariff"
+    icon: "mdi:meter-electric"
+    lambda: |-
+      float tariff = id(current_tariff).state;
+      if (tariff == 1.0) return {"Day"};
+      if (tariff == 2.0) return {"Night"};
+      return {};
+    update_interval: never
 
 binary_sensor:
   - platform: status
     name: "Node status"
-
-  - platform: template
-    name: "Night tariff"
-    icon: "mdi:weather-night"
-    lambda: |-
-      if (id(current_tariff).state == 2.0) {
-        return true;
-      }
-      if (id(current_tariff).state == 1.0) {
-        return false;
-      }
-      return {};
 
   - platform: template
     name: "Self-diagnostics"
@@ -342,6 +477,7 @@ binary_sensor:
 
   - platform: dlms_cosem
     connection:
+      id: optical_port
       name: "Optical port"
       icon: "mdi:swap-horizontal-circle"
       on_press:
